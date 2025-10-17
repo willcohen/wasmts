@@ -14,7 +14,9 @@ A WebAssembly port of [JTS (Java Topology Suite)](https://github.com/locationtec
 
 **Current**: JTS 1.20.0 compiled to WebAssembly with JavaScript API
 
-**Note**: The Java wrapper (`API.java`) currently exposes only a partial set of JTS operations - commonly-used geometry operations, predicates, and spatial indexing. The underlying WASM binary includes the full JTS library. Additional JTS features can be added by extending the wrapper, though care is needed to properly handle the Java-JavaScript interop boundary (type conversions, object wrapping, etc.).
+**Note**: This is a proof-of-concept wrapper providing basic JTS functionality. The underlying WASM binary includes the full JTS 1.20.0 library, but most of it isn't exposed to JavaScript yet. Adding new functionality requires creating Java wrapper methods in `API.java`, exporting them to JavaScript using annotations, and handling type conversions. This isn't particularly difficult but it still isn't fully automatic.
+
+**[Request additional JTS features →](https://github.com/willcohen/wasmts/issues/1)**
 
 Currently available:
 - **Object-oriented API** - Call methods directly on geometries: `point.buffer(10)`, `poly.union(other)`
