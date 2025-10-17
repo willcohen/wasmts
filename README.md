@@ -1,5 +1,9 @@
 # WasmTS
 
+[![npm version](https://badge.fury.io/js/@wcohen%2Fwasmts.svg)](https://www.npmjs.com/package/@wcohen/wasmts)
+[![npm downloads](https://img.shields.io/npm/dm/@wcohen/wasmts.svg)](https://www.npmjs.com/package/@wcohen/wasmts)
+[![License](https://img.shields.io/badge/License-EPL%202.0%20OR%20EDL%201.0-blue.svg)](LICENSE_EDLv1.txt)
+
 Spatial operations and computational geometry for WebAssembly.
 
 A WebAssembly port of [JTS (Java Topology Suite)](https://github.com/locationtech/jts) using [GraalVM Native Image](https://www.graalvm.org/latest/reference-manual/native-image/) with [web-image backend](https://github.com/oracle/graal/tree/master/web-image) (GraalVM 26 Early Access preview).
