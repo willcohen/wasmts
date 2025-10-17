@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>net.willcohen</groupId>
+    <artifactId>wasmts</artifactId>
+    <version>0.1.0-alpha1</version>
+    <packaging>jar</packaging>
+
+    <name>WasmTS</name>
+    <description>JTS Topology Suite for WebAssembly using GraalVM</description>
+
+    <licenses>
+        <license>
+            <name>Eclipse Public License, Version 2.0</name>
+            <url>https://github.com/locationtech/jts/blob/master/LICENSE_EPLv2.txt</url>
+        </license>
+        <license>
+            <name>Eclipse Distribution License - v 1.0</name>
+            <url>https://github.com/locationtech/jts/blob/master/LICENSE_EDLv1.txt</url>
+        </license>
+    </licenses>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <jts.version>1.20.0</jts.version>
+        <graalvm.version>25.0.0</graalvm.version>
+        <exec.mainClass>net.willcohen.wasmts.API</exec.mainClass>
+        <wasm.output.name>wasmts</wasm.output.name>
+    </properties>
+
+    <dependencies>
+        <!-- JTS Core -->
+        <dependency>
+            <groupId>org.locationtech.jts</groupId>
+            <artifactId>jts-core</artifactId>
+            <version>${jts.version}</version>
+        </dependency>
+
+        <!-- GraalVM WebAssembly Preview API -->
+        <dependency>
+            <groupId>org.graalvm.sdk</groupId>
+            <artifactId>webimage-preview</artifactId>
+            <version>${graalvm.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <sourceDirectory>java/src/main/java</sourceDirectory>
+
+        <plugins>
+            <!-- Maven Compiler Plugin -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>21</source>
+                    <target>21</target>
+                    <compilerArgs>
+                        <arg>-parameters</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+
+            <!-- Maven Dependency Plugin - Copy dependencies to target -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-dependencies</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                            <!-- Include both runtime and provided (webimage-preview) -->
+                            <includeScope>compile</includeScope>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Exec Maven Plugin - Run native-image -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>build-wasm</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>native-image</executable>
+                            <arguments>
+                                <argument>--tool:svm-wasm</argument>
+                                <argument>--emit</argument>
+                                <argument>build-report</argument>
+                                <argument>-cp</argument>
+                                <argument>${project.build.outputDirectory}${path.separator}${project.build.directory}/lib/*</argument>
+                                <argument>${exec.mainClass}</argument>
+                                <argument>${project.build.directory}/${wasm.output.name}</argument>
+                            </arguments>
+                            <workingDirectory>${project.build.directory}</workingDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Maven Antrun Plugin - Move WASM artifacts to project root -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>move-wasm-artifacts</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <echo message="Moving WASM artifacts to js/src/..."/>
+                                <mkdir dir="${project.basedir}/js/src"/>
+                                <move file="${project.build.directory}/${wasm.output.name}.js"
+                                      tofile="${project.basedir}/js/src/${wasm.output.name}.js"
+                                      failonerror="false"/>
+                                <move file="${project.build.directory}/${wasm.output.name}.js.wasm"
+                                      tofile="${project.basedir}/js/src/${wasm.output.name}.js.wasm"
+                                      failonerror="false"/>
+                                <move file="${project.build.directory}/${wasm.output.name}.js.wat"
+                                      tofile="${project.basedir}/js/src/${wasm.output.name}.js.wat"
+                                      failonerror="false"/>
+                                <echo message=""/>
+                                <echo message="✓ WASM build complete!"/>
+                                <echo message=""/>
+                                <echo message="Generated files in js/src/:"/>
+                                <exec executable="ls" failonerror="false">
+                                    <arg value="-lh"/>
+                                    <arg value="${project.basedir}/js/src/${wasm.output.name}.js"/>
+                                    <arg value="${project.basedir}/js/src/${wasm.output.name}.js.wasm"/>
+                                </exec>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!-- Maven Central repository -->
+    <repositories>
+        <repository>
+            <id>central</id>
+            <name>Maven Central</name>
+            <url>https://repo1.maven.org/maven2</url>
+        </repository>
+    </repositories>
+</project>

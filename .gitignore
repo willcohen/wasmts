@@ -1,0 +1,32 @@
+.DS_Store*
+.clj-kondo
+.direnv
+.lsp
+.portal
+build
+flake-profile*
+
+# Nix flakes
+flake.nix
+flake.lock
+
+# Project documentation
+CLAUDE.md
+WORKPLAN.md
+
+# Maven
+target
+java/target/
+*.jar
+
+# npm
+node_modules/
+dist/
+js/src/
+*.tgz
+package-lock.json
+
+# Build outputs (allow if committed)
+# *.wasm
+# *.wat
+# *.js (from WASM)

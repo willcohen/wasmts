@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Interactive demo of WasmTS - Spatial operations and computational geometry for WebAssembly. Try geometry operations, spatial indexing, and 3D/4D coordinates in your browser.">
+    <title>WasmTS - Spatial Operations for WebAssembly</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .about {
+            background-color: #f0f8ff;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        .success {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+        #replInput {
+            width: 100%;
+            height: 300px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        #replOutput {
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            background: #f4f4f4;
+            padding: 15px;
+            border-radius: 3px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .repl-line {
+            margin: 5px 0;
+        }
+        .repl-input {
+            color: #0066cc;
+        }
+        .repl-output {
+            color: #000;
+        }
+        .repl-error {
+            color: red;
+        }
+        .repl-hint {
+            color: #666;
+            font-style: italic;
+            margin-top: 10px;
+        }
+        .button-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            align-items: center;
+        }
+        select {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            background: white;
+            cursor: pointer;
+            min-width: 300px;
+        }
+        select:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <h1>WasmTS Browser Demo</h1>
+
+    <section class="about">
+        <h2>About</h2>
+        <p>Browser-based demonstration of <strong>WasmTS</strong>, a WebAssembly port of JTS Topology Suite using GraalVM Native Image.</p>
+
+        <h3>Key Features</h3>
+        <ul>
+            <li>Geometry types: Point, LineString, Polygon, Multi*, GeometryCollection</li>
+            <li>Operations: buffer, union, intersection, difference, convexHull, simplify</li>
+            <li>Spatial predicates: contains, intersects, touches, crosses, within, overlaps, covers, equalsTopo</li>
+            <li>Geometry transformations: copy, reverse, normalize, getBoundary, getCentroid</li>
+            <li>Coordinate support: 2D, 3D (XYZ), and 4D (XYZM)</li>
+            <li>STRtree spatial indexing for efficient queries</li>
+            <li>PreparedGeometry for optimized repeated predicates</li>
+            <li>Advanced operations: LineMerger, CascadedPolygonUnion, OffsetCurveBuilder</li>
+            <li>WKT and WKB input/output</li>
+        </ul>
+
+        <h3>Implementation</h3>
+        <ul>
+            <li>JTS Topology Suite 1.20.0 compiled to WebAssembly using GraalVM Native Image (26 EA) with web-image backend</li>
+            <li>Direct Java-JavaScript bindings via GraalVM <code>@JS</code> annotations</li>
+            <li>Automatic memory management via JavaScript GC</li>
+            <li>Runs entirely client-side with no server communication</li>
+        </ul>
+
+        <p><strong>Links:</strong> <a href="https://github.com/willcohen/wasmts">GitHub</a> | <a href="https://github.com/locationtech/jts">JTS Repository</a> | <a href="https://github.com/oracle/graal/tree/master/web-image">GraalVM web-image</a></p>
+    </section>
+
+    <section>
+        <h2>Load Status</h2>
+        <div id="loadStatus" class="loading">Loading WASM module...</div>
+    </section>
+
+    <section>
+        <h2>Interactive REPL</h2>
+        <p>Enter JavaScript code using the <code>wasmts</code> API. Results will be displayed below.</p>
+        <div id="replInput"></div>
+        <div class="button-row">
+            <button id="replRun" disabled>Run (Ctrl+Enter)</button>
+            <button id="replClear" disabled>Clear Output</button>
+            <select id="exampleSelect" disabled>
+                <option value="">Load Example...</option>
+                <option value="geometry">Geometry Methods (Operations, Predicates, Transformations)</option>
+                <option value="buffer">Buffering (Simple and Advanced)</option>
+                <option value="strtree">STRtree Spatial Index</option>
+                <option value="prepared">PreparedGeometry (Optimized Predicates)</option>
+                <option value="rectangles">Minimum Bounding Rectangles & Circles</option>
+                <option value="offsetcurve">Offset Curves</option>
+                <option value="linemerger">LineMerger</option>
+                <option value="cascadedunion">CascadedPolygonUnion</option>
+                <option value="3d">3D Geometries (XYZ)</option>
+                <option value="4d">4D Geometries (XYZM)</option>
+                <option value="io">WKT/WKB I/O</option>
+            </select>
+        </div>
+        <div id="replOutput"></div>
+    </div>
+
+    <!-- Load Monaco Editor -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+
+    <!-- Load the WASM module as a regular script -->
+    <!-- Using <script src> ensures document.currentScript points to wasmts.js -->
+    <!-- TODO: Once published to npm, load from CDN like: https://cdn.jsdelivr.net/npm/wasmts@latest/wasmts.js -->
+    <script src="../dist/wasmts.js"></script>
+
+    <script>
+        // Configure Monaco Editor
+        require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' }});
+
+        let monacoEditor = null;
+
+        require(['vs/editor/editor.main'], function() {
+            // Create Monaco Editor
+            monacoEditor = monaco.editor.create(document.getElementById('replInput'), {
+                value: `// Try some commands:\nconst point = wasmts.geom.createPoint(5, 10);\npoint.buffer(5).getArea()`,
+                language: 'javascript',
+                theme: 'vs-dark',
+                minimap: { enabled: false },
+                automaticLayout: true,
+                fontSize: 14,
+                lineNumbers: 'on',
+                scrollBeyondLastLine: false,
+                wordWrap: 'on'
+            });
+
+            // Add Ctrl+Enter to run
+            monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, function() {
+                runREPL();
+            });
+
+            // Setup autocomplete for wasmts API
+            monaco.languages.registerCompletionItemProvider('javascript', {
+                provideCompletionItems: function(model, position) {
+                    const suggestions = [
+                        // wasmts namespace
+                        { label: 'wasmts', kind: monaco.languages.CompletionItemKind.Module, insertText: 'wasmts', documentation: 'WasmTS root namespace' },
+                        { label: 'wasmts.geom', kind: monaco.languages.CompletionItemKind.Module, insertText: 'wasmts.geom', documentation: 'Geometry operations' },
+                        { label: 'wasmts.io', kind: monaco.languages.CompletionItemKind.Module, insertText: 'wasmts.io', documentation: 'I/O operations' },
+                        { label: 'wasmts.index.strtree', kind: monaco.languages.CompletionItemKind.Module, insertText: 'wasmts.index.strtree', documentation: 'Spatial indexing' },
+
+                        // Geometry creation
+                        { label: 'createPoint', kind: monaco.languages.CompletionItemKind.Function, insertText: 'createPoint(${1:x}, ${2:y})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
+                        { label: 'createLineString', kind: monaco.languages.CompletionItemKind.Function, insertText: 'createLineString(${1:coords})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
+                        { label: 'createPolygon', kind: monaco.languages.CompletionItemKind.Function, insertText: 'createPolygon(${1:shell}, ${2:holes})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
+                        { label: 'GeometryFactory', kind: monaco.languages.CompletionItemKind.Function, insertText: 'GeometryFactory()', documentation: 'Create geometry factory' },
+
+                        // Operations
+                        { label: 'buffer', kind: monaco.languages.CompletionItemKind.Method, insertText: 'buffer(${1:distance})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
+                        { label: 'union', kind: monaco.languages.CompletionItemKind.Method, insertText: 'union(${1:other})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
+                        { label: 'intersection', kind: monaco.languages.CompletionItemKind.Method, insertText: 'intersection(${1:other})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
+                        { label: 'contains', kind: monaco.languages.CompletionItemKind.Method, insertText: 'contains(${1:other})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
+                        { label: 'getArea', kind: monaco.languages.CompletionItemKind.Method, insertText: 'getArea()', documentation: 'Get area of geometry' },
+
+                        // I/O
+                        { label: 'readWKT', kind: monaco.languages.CompletionItemKind.Function, insertText: 'readWKT(${1:wkt})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: 'Read WKT (Well-Known Text)' },
+                        { label: 'writeWKT', kind: monaco.languages.CompletionItemKind.Function, insertText: 'writeWKT(${1:geom})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: 'Write WKT (Well-Known Text)' },
+                        { label: 'readWKB', kind: monaco.languages.CompletionItemKind.Function, insertText: 'readWKB(${1:bytes})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: 'Read WKB (Well-Known Binary)' },
+                        { label: 'writeWKB', kind: monaco.languages.CompletionItemKind.Function, insertText: 'writeWKB(${1:geom})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: 'Write WKB (Well-Known Binary)' },
+                    ];
+                    return { suggestions: suggestions };
+                }
+            });
+        });
+    </script>
+
+    <script>
+        // Wait for WASM to initialize after the script loads
+        console.log('Waiting for WASM initialization...');
+        waitForWasmTS();
+
+        function waitForWasmTS() {
+            const maxAttempts = 50; // 5 seconds max
+            let attempts = 0;
+
+            const checkInterval = setInterval(() => {
+                attempts++;
+
+                if (typeof wasmts !== 'undefined' && wasmts.geom) {
+                    clearInterval(checkInterval);
+                    console.log('WasmTS initialized!');
+                    checkAPI();
+                } else if (attempts >= maxAttempts) {
+                    clearInterval(checkInterval);
+                    const status = document.getElementById('loadStatus');
+                    status.className = 'test-result error';
+                    status.innerHTML = '✗ Timeout waiting for WasmTS initialization<br>' +
+                                      'Check browser console for errors';
+                }
+            }, 100);
+        }
+
+        function checkAPI() {
+            const status = document.getElementById('loadStatus');
+
+            // Check if wasmts namespace exists
+            if (typeof wasmts !== 'undefined') {
+                status.className = 'test-result success';
+                status.textContent = '✓ WasmTS loaded successfully';
+
+                // Enable test buttons and dropdown
+                document.querySelectorAll('button').forEach(btn => btn.disabled = false);
+                document.querySelectorAll('select').forEach(sel => sel.disabled = false);
+            } else {
+                status.className = 'test-result error';
+                status.textContent = '✗ wasmts namespace not found - API may not be exported correctly';
+            }
+        }
+
+
+        // Example code templates
+        const examples = {
+            geometry: `// Comprehensive Geometry Methods Demo
+// Operations, Predicates, Transformations, Properties, and Validation
+
+// === BASIC OPERATIONS ===
+console.log('=== Basic Operations ===');
+
+// Create geometries
+const circle1 = wasmts.geom.createPoint(0, 0).buffer(10);
+const circle2 = wasmts.geom.createPoint(15, 0).buffer(10);
+
+// Union - combines geometries
+const union = circle1.union(circle2);
+console.log('Union area:', union.getArea().toFixed(2));
+
+// Intersection - overlapping region
+const intersection = circle1.intersection(circle2);
+console.log('Intersection area:', intersection.getArea().toFixed(2));
+
+// Difference - subtract one from another
+const difference = circle1.difference(circle2);
+console.log('Difference area:', difference.getArea().toFixed(2));
+
+// Symmetric difference - non-overlapping parts
+const symDiff = circle1.symDifference(circle2);
+console.log('Symmetric difference area:', symDiff.getArea().toFixed(2));
+
+// Convex hull
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 2, 12 10, 2 12, 0 0))');
+const hull = poly.convexHull();
+console.log('Convex hull area:', hull.getArea().toFixed(2));
+
+// === SPATIAL PREDICATES ===
+console.log('\\n=== Spatial Predicates ===');
+
+const container = wasmts.io.WKTReader.read('POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0))');
+const small = wasmts.io.WKTReader.read('POLYGON ((5 5, 15 5, 15 15, 5 15, 5 5))');
+
+console.log('container.contains(small):', container.contains(small));
+console.log('small.within(container):', small.within(container));
+console.log('container.covers(small):', container.covers(small));
+console.log('small.coveredBy(container):', small.coveredBy(container));
+console.log('container.intersects(small):', container.intersects(small));
+console.log('container.disjoint(small):', container.disjoint(small));
+
+// Topological equality
+const poly1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const poly2 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+console.log('poly1.equalsTopo(poly2):', poly1.equalsTopo(poly2));
+
+// === GEOMETRY TRANSFORMATIONS ===
+console.log('\\n=== Transformations ===');
+
+// Copy
+const polyCopy = poly1.copy();
+console.log('Copy equalsTopo:', polyCopy.equalsTopo(poly1));
+
+// Reverse coordinate order
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 5 5, 10 0)');
+const reversed = line.reverse();
+console.log('Reversed:', wasmts.io.WKTWriter.write(reversed).substring(0, 40));
+
+// Normalize to canonical form
+const normalized = poly1.normalize();
+console.log('Normalized');
+
+// Boundary
+const boundary = poly1.getBoundary();
+console.log('Boundary type:', boundary.type);
+
+// Centroid
+const centroid = poly1.getCentroid();
+console.log('Centroid:', wasmts.io.WKTWriter.write(centroid));
+
+// === GEOMETRY PROPERTIES ===
+console.log('\\n=== Properties ===');
+
+// Envelope (bounding box)
+const envelope = poly1.getEnvelope();
+console.log('Envelope:', wasmts.io.WKTWriter.write(envelope));
+
+// Interior point (guaranteed inside)
+const interior = poly1.getInteriorPoint();
+console.log('Interior point inside:', poly1.contains(interior));
+
+// Measurements
+console.log('Area:', poly1.getArea());
+console.log('Length:', line.getLength().toFixed(2));
+console.log('Distance:', poly1.distance(small).toFixed(2));
+console.log('Num points:', poly1.getNumPoints());
+
+// === VALIDATION ===
+console.log('\\n=== Validation ===');
+
+console.log('poly1.isEmpty():', poly1.isEmpty());
+console.log('poly1.isValid():', poly1.isValid());
+console.log('poly1.isSimple():', poly1.isSimple());
+console.log('poly1.isRectangle():', poly1.isRectangle());
+
+const selfIntersecting = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10, 10 0, 0 10)');
+console.log('Self-intersecting line.isSimple():', selfIntersecting.isSimple());
+
+// === USER DATA ===
+console.log('\\n=== User Data ===');
+poly1.setUserData({ id: 123, name: 'Test' });
+console.log('User data:', poly1.getUserData());
+
+union`,
+
+            buffer: `// Buffering - Simple and Advanced
+// Create zones, offsets, and parallel curves
+
+console.log('=== Simple Buffering ===');
+
+// Basic point buffer
+const point = wasmts.geom.createPoint(0, 0);
+const buffered = point.buffer(10);
+console.log('Buffer area:', buffered.getArea().toFixed(2), '(should be π*r² ≈ 314.16)');
+
+// Line buffer
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 0)');
+const lineBuffer = line.buffer(2);
+console.log('Line buffer area:', lineBuffer.getArea().toFixed(2));
+
+// Negative buffer (erosion)
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0))');
+const eroded = poly.buffer(-2);
+console.log('Original area:', poly.getArea());
+console.log('Eroded area:', eroded.getArea().toFixed(2));
+
+console.log('\\n=== Advanced Buffering ===');
+
+// Buffer parameter constants
+const CAP_ROUND = 1, CAP_FLAT = 2, CAP_SQUARE = 3;
+const JOIN_ROUND = 1, JOIN_MITRE = 2, JOIN_BEVEL = 3;
+
+// Different cap styles
+const roundCap = line.buffer(2, CAP_ROUND, JOIN_ROUND, 5.0);
+const flatCap = line.buffer(2, CAP_FLAT, JOIN_ROUND, 5.0);
+const squareCap = line.buffer(2, CAP_SQUARE, JOIN_ROUND, 5.0);
+
+console.log('Round cap area:', roundCap.getArea().toFixed(2));
+console.log('Flat cap area:', flatCap.getArea().toFixed(2));
+console.log('Square cap area:', squareCap.getArea().toFixed(2));
+
+// Different join styles on sharp corners
+const sharpPoly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 1, 5 1, 5 10, 0 10, 0 0))');
+const mitreJoin = sharpPoly.buffer(0.5, CAP_ROUND, JOIN_MITRE, 10.0);
+const bevelJoin = sharpPoly.buffer(0.5, CAP_ROUND, JOIN_BEVEL, 5.0);
+const roundJoin = sharpPoly.buffer(0.5, CAP_ROUND, JOIN_ROUND, 5.0);
+
+console.log('Mitre join area:', mitreJoin.getArea().toFixed(2));
+console.log('Bevel join area:', bevelJoin.getArea().toFixed(2));
+console.log('Round join area:', roundJoin.getArea().toFixed(2));
+
+buffered`,
+
+            strtree: `// STRtree Spatial Indexing
+// Efficient spatial queries using R-tree index
+const startTime = performance.now();
+
+// Create STRtree
+const index = wasmts.index.strtree.STRtree.create();
+console.log('STRtree created');
+
+// Insert 100 random polygons
+const geometries = [];
+for (let i = 0; i < 100; i++) {
+    const x = Math.random() * 1000;
+    const y = Math.random() * 1000;
+    const poly = wasmts.io.WKTReader.read(
+        \`POLYGON ((\${x} \${y}, \${x+10} \${y}, \${x+10} \${y+10}, \${x} \${y+10}, \${x} \${y}))\`
+    );
+    const envelope = poly.getEnvelopeInternal();
+    wasmts.index.strtree.STRtree.insert(index, envelope, {id: i, geom: poly});
+    geometries.push({id: i, poly, envelope});
+}
+console.log('Inserted 100 geometries');
+
+// Query with search envelope
+const searchEnv = wasmts.geom.createEnvelope(0, 100, 0, 100);
+const results = wasmts.index.strtree.STRtree.query(index, searchEnv);
+
+const indexTime = performance.now() - startTime;
+console.log(\`STRtree query found \${results.length} results in \${indexTime.toFixed(2)}ms\`);
+
+\`Found \${results.length} geometries in \${indexTime.toFixed(2)}ms\``,
+
+            prepared: `// PreparedGeometry - Optimized for repeated predicates
+// Create a complex polygon
+const polygon = wasmts.io.WKTReader.read('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0), (20 20, 40 20, 40 40, 20 40, 20 20))');
+console.log('Created polygon with hole, area:', polygon.getArea());
+
+// Prepare the geometry for repeated containment tests
+const prepared = wasmts.geom.prep.PreparedGeometryFactory.prepare(polygon);
+console.log('PreparedGeometry created\\n');
+
+// Test multiple points against the prepared geometry
+const testPoints = [
+    { x: 50, y: 50, desc: 'center of polygon' },
+    { x: 30, y: 30, desc: 'inside hole' },
+    { x: 0, y: 0, desc: 'on boundary' },
+    { x: 150, y: 150, desc: 'outside' },
+    { x: 10, y: 10, desc: 'inside (near edge)' }
+];
+
+console.log('Testing containsProperly on multiple points:');
+for (const {x, y, desc} of testPoints) {
+    const point = wasmts.geom.createPoint(x, y);
+    const result = wasmts.geom.prep.PreparedGeometry.containsProperly(prepared, point);
+    console.log(\`  (\${x}, \${y}) - \${desc}: \${result}\`);
+}
+
+// Test coveredBy with a small polygon
+const smallPoly = wasmts.io.WKTReader.read('POLYGON ((5 5, 15 5, 15 15, 5 15, 5 5))');
+const isCovered = wasmts.geom.prep.PreparedGeometry.coveredBy(prepared, smallPoly);
+console.log('\\nSmall polygon covered by big polygon:', isCovered);
+
+// Extract original geometry
+const original = wasmts.geom.prep.PreparedGeometry.getGeometry(prepared);
+console.log('\\nExtracted original geometry, area:', original.getArea());
+
+'PreparedGeometry demo complete'`,
+
+            rectangles: `// Minimum Bounding Rectangles
+// Create an irregular polygon
+const polygon = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 2, 12 10, 2 12, 0 0))');
+console.log('Created irregular polygon');
+console.log('  Area:', polygon.getArea().toFixed(2));
+console.log('  Type:', polygon.type);
+console.log('');
+
+// Find minimum-width bounding rectangle (based on minimum diameter)
+const minDiamRect = wasmts.algorithm.MinimumDiameter.getMinimumRectangle(polygon);
+console.log('Minimum Diameter Rectangle:');
+console.log('  Type:', minDiamRect.type);
+if (minDiamRect.type === 'Polygon') {
+    console.log('  Area:', minDiamRect.getArea().toFixed(2));
+    console.log('  Contains original:', minDiamRect.contains(polygon));
+}
+console.log('');
+
+// Find minimum-area bounding rectangle
+const minAreaRect = wasmts.algorithm.MinimumBoundingCircle.getMinimumRectangle(polygon);
+console.log('Minimum Area Rectangle:');
+console.log('  Type:', minAreaRect.type);
+if (minAreaRect.type === 'Polygon') {
+    console.log('  Area:', minAreaRect.getArea().toFixed(2));
+    console.log('  Contains original:', minAreaRect.contains(polygon));
+}
+console.log('');
+
+// Compare the two
+console.log('Comparison:');
+console.log('  Original area:', polygon.getArea().toFixed(2));
+if (minDiamRect.type === 'Polygon' && minAreaRect.type === 'Polygon') {
+    const diamArea = minDiamRect.getArea();
+    const areaRect = minAreaRect.getArea();
+    console.log('  Min diameter rect area:', diamArea.toFixed(2));
+    console.log('  Min area rect area:', areaRect.toFixed(2));
+    console.log('  Area savings:', ((diamArea - areaRect) / diamArea * 100).toFixed(1) + '%');
+}
+
+// Test with a triangle
+const triangle = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 5 10, 0 0))');
+const triRect = wasmts.algorithm.MinimumBoundingCircle.getMinimumRectangle(triangle);
+console.log('\\nTriangle minimum rectangle area:', triRect.getArea().toFixed(2));
+
+minAreaRect`,
+
+            offsetcurve: `// Offset Curves
+// Create parallel lines/curves for road shoulders, railroad tracks, etc.
+// Useful for road shoulders, railroad tracks, buffer boundaries, etc.
+
+// Create a simple line
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 0, 10 10)');
+console.log('Created test line\\n');
+
+// Standard offset to the right (positive distance)
+const rightOffset = wasmts.operation.buffer.OffsetCurveBuilder.getOffsetCurve(line, 2);
+console.log('Right offset points:', rightOffset.getCoordinates().length);
+
+// Offset to the left (negative distance)
+const leftOffset = wasmts.operation.buffer.OffsetCurveBuilder.getOffsetCurve(line, -2);
+console.log('Left offset points:', leftOffset.getCoordinates().length);
+console.log('');
+
+// Custom parameters for different corner styles
+const CAP_FLAT = 2, JOIN_MITRE = 2;
+const sharpOffset = wasmts.operation.buffer.OffsetCurveBuilder.getOffsetCurve(line, 2, CAP_FLAT, JOIN_MITRE, 10.0);
+console.log('Sharp corner offset created');
+console.log('');
+
+// Offset curves on polygons (creates offset of exterior ring)
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0))');
+const polyOffset = wasmts.operation.buffer.OffsetCurveBuilder.getOffsetCurve(poly, 3);
+console.log('Polygon exterior offset created');
+console.log('Offset points:', polyOffset.getCoordinates().length);
+console.log('');
+
+// Compare with buffer (offset curve is just the line, buffer is filled area)
+const buffer = line.buffer(2);
+console.log('Buffer area:', buffer.getArea().toFixed(2));
+console.log('Offset curve is just the boundary line');
+
+rightOffset`,
+
+            linemerger: `// LineMerger - Combine connected linestrings into longer lines
+// Useful for simplifying road networks, contours, etc.
+
+// Create separate line segments that connect end-to-end
+const line1 = wasmts.io.WKTReader.read('LINESTRING (0 0, 5 0)');
+const line2 = wasmts.io.WKTReader.read('LINESTRING (5 0, 10 0)');
+const line3 = wasmts.io.WKTReader.read('LINESTRING (10 0, 10 5)');
+
+// Separate disconnected line
+const line4 = wasmts.io.WKTReader.read('LINESTRING (20 20, 25 25)');
+
+console.log('Created 4 separate line segments\\n');
+
+// Create LineMerger instance
+const merger = wasmts.operation.linemerge.LineMerger.create();
+
+// Add all lines to the merger
+wasmts.operation.linemerge.LineMerger.add(merger, line1);
+wasmts.operation.linemerge.LineMerger.add(merger, line2);
+wasmts.operation.linemerge.LineMerger.add(merger, line3);
+wasmts.operation.linemerge.LineMerger.add(merger, line4);
+console.log('Added 4 lines to merger\\n');
+
+// Get merged result
+const merged = wasmts.operation.linemerge.LineMerger.getMergedLineStrings(merger);
+console.log('Merged result count:', merged.length);
+console.log('(Connected lines merged into 1, disconnected line stays separate)\\n');
+
+// Examine the merged lines
+merged.forEach((line, i) => {
+    const coords = line.getCoordinates();
+    console.log(\`Line \${i + 1}: \${coords.length} points\`);
+    console.log('  Start:', coords[0].x, coords[0].y);
+    console.log('  End:', coords[coords.length - 1].x, coords[coords.length - 1].y);
+});
+
+merged[0]`,
+
+            cascadedunion: `// CascadedPolygonUnion - Efficiently union many overlapping polygons
+// Much faster than iteratively unioning polygons one-by-one
+
+// Create multiple overlapping polygons
+const poly1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const poly2 = wasmts.io.WKTReader.read('POLYGON ((5 5, 15 5, 15 15, 5 15, 5 5))');
+const poly3 = wasmts.io.WKTReader.read('POLYGON ((10 10, 20 10, 20 20, 10 20, 10 10))');
+const poly4 = wasmts.io.WKTReader.read('POLYGON ((8 0, 18 0, 18 8, 8 8, 8 0))');
+
+console.log('Created 4 overlapping polygons');
+console.log('Total area (with overlaps):',
+    poly1.getArea() + poly2.getArea() + poly3.getArea() + poly4.getArea());
+console.log('');
+
+// Union all at once (much faster than sequential unions)
+const union = wasmts.operation.union.CascadedPolygonUnion.union([poly1, poly2, poly3, poly4]);
+
+console.log('Union result type:', union.type);
+console.log('Union area (overlaps removed):', union.getArea().toFixed(2));
+console.log('Area saved by removing overlaps:',
+    ((poly1.getArea() + poly2.getArea() + poly3.getArea() + poly4.getArea()) - union.getArea()).toFixed(2));
+
+union`,
+
+            "3d": `// 3D Geometries with Z coordinates
+
+// Create 3D point
+const point3d = wasmts.geom.createPoint(5, 10, 15);
+console.log('3D Point created');
+const coords = point3d.getCoordinates();
+console.log('X:', coords[0].x, 'Y:', coords[0].y, 'Z:', coords[0].z);
+
+// Create 3D LineString with elevation
+const line3d = wasmts.io.WKTReader.read('LINESTRING Z (0 0 0, 1 1 10, 2 1 20, 3 0 15)');
+console.log('\\n3D LineString created');
+const lineCoords = line3d.getCoordinates();
+console.log('Points:', lineCoords.length);
+lineCoords.forEach((c, i) => {
+    console.log(\`  Point \${i}: X=\${c.x}, Y=\${c.y}, Z=\${c.z}\`);
+});
+
+// Calculate 2D length (ignores Z)
+console.log('\\n2D length:', line3d.getLength().toFixed(2));
+
+// WKT/WKB I/O preserves Z
+const wkt = wasmts.io.WKTWriter.write(point3d);
+console.log('\\nWKT:', wkt);
+
+const wkb = wasmts.io.WKBWriter.write(line3d);
+console.log('WKB size:', wkb.length, 'bytes');
+
+const fromWKB = wasmts.io.WKBReader.read(wkb);
+const wkbCoords = fromWKB.getCoordinates();
+console.log('Round-trip Z preserved:', wkbCoords[2].z === 20);
+
+line3d`,
+
+            "4d": `// 4D Geometries with XYZM coordinates (Z=elevation, M=measure)
+
+// Create 4D point
+const point4d = wasmts.geom.createPoint(5, 10, 15, 20);
+console.log('4D Point (XYZM) created');
+const coords = point4d.getCoordinates();
+console.log('X:', coords[0].x, 'Y:', coords[0].y, 'Z:', coords[0].z, 'M:', coords[0].m);
+
+// Create 4D LineString (with measure values for linear referencing)
+const line4d = wasmts.io.WKTReader.read('LINESTRING ZM (0 0 0 100, 1 1 10 200, 2 0 20 300)');
+console.log('\\n4D LineString created');
+const line4dCoords = line4d.getCoordinates();
+console.log('Point 0:', line4dCoords[0]);
+console.log('Point 1:', line4dCoords[1]);
+
+// WKB round-trip preserves Z and M
+const wkb = wasmts.io.WKBWriter.write(line4d);
+console.log('\\nWKB size:', wkb.length, 'bytes');
+const parsed = wasmts.io.WKBReader.read(wkb);
+const parsedCoords = parsed.getCoordinates();
+console.log('Round-trip M preserved:', parsedCoords[1].m === 200);
+
+point4d`,
+
+            io: `// WKT and WKB Input/Output
+
+console.log('=== WKT I/O ===');
+
+// Read from WKT
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+console.log('Read polygon, area:', poly.getArea());
+
+// Write to WKT
+const wkt = wasmts.io.WKTWriter.write(poly);
+console.log('WKT:', wkt);
+
+console.log('\\n=== WKB I/O ===');
+
+// Write to WKB (binary format)
+const wkb = wasmts.io.WKBWriter.write(poly);
+console.log('WKB size:', wkb.length, 'bytes');
+console.log('First 10 bytes:', Array.from(wkb.slice(0, 10)));
+
+// Read from WKB
+const fromWKB = wasmts.io.WKBReader.read(wkb);
+console.log('Round-trip successful:', fromWKB.equals(poly));
+
+console.log('\\n=== 3D/4D I/O ===');
+
+// 3D geometries
+const point3d = wasmts.geom.createPoint(1, 2, 3);
+const wkt3d = wasmts.io.WKTWriter.write(point3d);
+console.log('3D WKT:', wkt3d);
+
+// 4D geometries
+const line4d = wasmts.io.WKTReader.read('LINESTRING ZM (0 0 0 100, 1 1 10 200)');
+const wkb4d = wasmts.io.WKBWriter.write(line4d);
+console.log('4D WKB size:', wkb4d.length, 'bytes');
+
+poly`
+        };
+
+        // Dropdown handler
+        document.getElementById('exampleSelect').addEventListener('change', (e) => {
+            if (!monacoEditor) return;
+            const exampleKey = e.target.value;
+            if (!exampleKey || !examples[exampleKey]) return;
+
+            document.getElementById('replClear').click();
+            monacoEditor.setValue(examples[exampleKey]);
+            monacoEditor.focus();
+
+            // Reset dropdown to placeholder
+            setTimeout(() => {
+                e.target.value = '';
+            }, 100);
+        });
+
+        // REPL functionality
+        const replOutput = document.getElementById('replOutput');
+
+        function replLog(text, type = 'output') {
+            const line = document.createElement('div');
+            line.className = `repl-line repl-${type}`;
+            line.textContent = text;
+            replOutput.appendChild(line);
+            replOutput.scrollTop = replOutput.scrollHeight;
+        }
+
+        function formatValue(value) {
+            if (value === undefined) return undefined;
+            if (typeof value === 'object' && value !== null) {
+                // Pretty print objects
+                if (value.type && value._jtsGeom) {
+                    // It's a geometry object - show appropriate metrics based on type
+                    const type = value.type;
+                    const metrics = [];
+
+                    // Polygonal types: show area
+                    if (type === 'Polygon' || type === 'MultiPolygon' || type === 'GeometryCollection') {
+                        const area = value.getArea?.();
+                        if (area !== undefined && area > 0) {
+                            metrics.push(`area: ${area.toFixed(2)}`);
+                        }
+                    }
+
+                    // Linear types: show length
+                    if (type === 'LineString' || type === 'MultiLineString' || type === 'LinearRing') {
+                        const length = value.getLength?.();
+                        if (length !== undefined && length > 0) {
+                            metrics.push(`length: ${length.toFixed(2)}`);
+                        }
+                    }
+
+                    // Points: show coordinates count
+                    if (type === 'Point' || type === 'MultiPoint') {
+                        const coords = value.getCoordinates?.();
+                        if (coords && coords.length > 0) {
+                            const coord = coords[0];
+                            const dims = coord.m !== undefined ? '4D' : coord.z !== undefined ? '3D' : '2D';
+                            metrics.push(`${dims}`);
+                        }
+                    }
+
+                    metrics.push(`valid: ${value.isValid?.()}`);
+                    return `${type} { ${metrics.join(', ')} }`;
+                } else if (value instanceof Uint8Array) {
+                    // Format byte array as hex string
+                    const hex = Array.from(value.slice(0, 32))
+                        .map(b => b.toString(16).padStart(2, '0'))
+                        .join(' ');
+                    return `Uint8Array(${value.length}) [ ${hex}${value.length > 32 ? ' ...' : ''} ]`;
+                } else if (Array.isArray(value)) {
+                    return `Array(${value.length}) [ ${value.slice(0, 5).map(r => JSON.stringify(r)).join(', ')}${value.length > 5 ? '...' : ''} ]`;
+                } else {
+                    return JSON.stringify(value, null, 2);
+                }
+            }
+            return String(value);
+        }
+
+        function runREPL() {
+            if (!monacoEditor) return;
+            const code = monacoEditor.getValue().trim();
+            if (!code) return;
+
+            // Show input
+            replLog('> ' + code.split('\n').join('\n  '), 'input');
+
+            try {
+                // Intercept console.log
+                const logs = [];
+                const originalLog = console.log;
+                console.log = function(...args) {
+                    logs.push(args.map(arg => formatValue(arg) || String(arg)).join(' '));
+                    originalLog.apply(console, args);
+                };
+
+                // Evaluate all code as one block
+                const result = eval(code);
+
+                // Restore console.log
+                console.log = originalLog;
+
+                // Show console.log output
+                logs.forEach(log => replLog(log, 'output'));
+
+                // Display final result
+                if (result !== undefined) {
+                    const formatted = formatValue(result);
+                    if (formatted) {
+                        replLog(formatted, 'output');
+                    }
+                }
+            } catch (err) {
+                replLog(`Error: ${err.message}`, 'error');
+                console.error(err);
+            }
+
+            replLog('', 'output'); // Empty line for spacing
+        }
+
+        document.getElementById('replRun').addEventListener('click', runREPL);
+
+        document.getElementById('replClear').addEventListener('click', () => {
+            replOutput.innerHTML = '<div class="repl-hint">// Output cleared. Ready for new commands.</div>';
+        });
+
+        // Initialize REPL output
+        document.getElementById('replClear').click();
+    </script>
+</body>
+</html>
