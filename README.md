@@ -176,11 +176,7 @@ npx http-server -p 8000
 
 **Interactive demo**: Open [docs/index.html](docs/index.html) to test geometry creation, operations, and spatial indexing.
 
-**Browser compatibility**:
-- Chrome/Edge 90+
-- Firefox 89+
-- Safari 15.4+
-- Any browser with WebAssembly + ES6 modules support
+**Browser compatibility**: Any modern browser with WebAssembly support (Chrome, Firefox, Safari, Edge).
 
 ### API Examples
 
@@ -293,17 +289,26 @@ const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
 
 All creation methods return geometry objects with shape `{type: string, _jtsGeom: JavaObject}`.
 
-**Basic Geometries:**
+**Points:**
 - `wasmts.geom.createPoint(x, y)` - Create 2D point
 - `wasmts.geom.createPoint(x, y, z)` - Create 3D point (XYZ)
 - `wasmts.geom.createPoint(x, y, z, m)` - Create 4D point (XYZM with measure)
+
+**LineStrings:**
+- `wasmts.geom.createLineString([{x, y}, {x, y}, ...])` - Create from coordinate array
+- Supports 3D: `[{x, y, z}, ...]` and 4D: `[{x, y, z, m}, ...]`
+
+**Polygons:**
+- `wasmts.geom.createPolygon(shell)` - Create simple polygon from coordinate array
+- `wasmts.geom.createPolygon(shell, [hole1, hole2, ...])` - Create polygon with holes
+- Each ring is an array of `{x, y}` (or `{x, y, z}`, `{x, y, z, m}`) objects
+
+**Envelopes:**
 - `wasmts.geom.createEnvelope(minX, maxX, minY, maxY)` - Create bounding box
 
-**Complex geometries** (LineString, Polygon, Multi*) use WKT or WKB:
-- `wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)')` - 2D LineString
-- `wasmts.io.WKTReader.read('LINESTRING Z (0 0 0, 1 1 10)')` - 3D LineString
-- `wasmts.io.WKTReader.read('LINESTRING ZM (0 0 0 100, 1 1 10 200)')` - 4D LineString
-- `wasmts.io.WKTReader.read('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0))')` - 2D Polygon
+**From WKT/WKB** (alternative for complex geometries):
+- `wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)')` - Parse WKT
+- `wasmts.io.WKTReader.read('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0))')` - Parse WKT
 
 **3D/4D Coordinates:**
 
@@ -504,11 +509,19 @@ const original = wasmts.geom.prep.PreparedGeometry.getGeometry(prepared);
 
 Available methods:
 - `wasmts.geom.prep.PreparedGeometryFactory.prepare(geometry)` - Create PreparedGeometry from any geometry
+- `wasmts.geom.prep.PreparedGeometry.contains(prepGeom, testGeom)` - True if testGeom is inside prepGeom
 - `wasmts.geom.prep.PreparedGeometry.containsProperly(prepGeom, testGeom)` - True if testGeom is fully inside (not touching boundary)
+- `wasmts.geom.prep.PreparedGeometry.covers(prepGeom, testGeom)` - True if prepGeom covers testGeom
 - `wasmts.geom.prep.PreparedGeometry.coveredBy(prepGeom, testGeom)` - True if prepGeom is covered by testGeom
+- `wasmts.geom.prep.PreparedGeometry.crosses(prepGeom, testGeom)` - True if geometries cross
+- `wasmts.geom.prep.PreparedGeometry.disjoint(prepGeom, testGeom)` - True if geometries don't intersect
+- `wasmts.geom.prep.PreparedGeometry.intersects(prepGeom, testGeom)` - True if geometries intersect
+- `wasmts.geom.prep.PreparedGeometry.overlaps(prepGeom, testGeom)` - True if geometries overlap
+- `wasmts.geom.prep.PreparedGeometry.touches(prepGeom, testGeom)` - True if geometries touch at boundary
+- `wasmts.geom.prep.PreparedGeometry.within(prepGeom, testGeom)` - True if prepGeom is within testGeom
 - `wasmts.geom.prep.PreparedGeometry.getGeometry(prepGeom)` - Extract the underlying Geometry object
 
-Use PreparedGeometry when testing many geometries against a single fixed geometry for better performance.
+Use PreparedGeometry when testing many geometries against a single fixed geometry.
 
 ### Geometry Analysis Algorithms (`wasmts.algorithm.*`)
 
@@ -535,9 +548,10 @@ console.log('Circle centre:', centre, 'radius:', radius);
 
 Available algorithms:
 - `wasmts.algorithm.MinimumDiameter.getMinimumRectangle(geometry)` - Rectangle with minimum width
+- `wasmts.algorithm.MinimumDiameter.getLength(geometry)` - The minimum width (diameter) value
 - `wasmts.algorithm.MinimumAreaRectangle.getMinimumRectangle(geometry)` - Rectangle with minimum area (rotating calipers)
 - `wasmts.algorithm.MinimumBoundingCircle.getCircle(geometry)` - Smallest enclosing circle (as Polygon)
-- `wasmts.algorithm.MinimumBoundingCircle.getCentre(geometry)` - Circle centre as `{x, y}`
+- `wasmts.algorithm.MinimumBoundingCircle.getCentre(geometry)` - Circle center as `{x, y}`
 - `wasmts.algorithm.MinimumBoundingCircle.getRadius(geometry)` - Circle radius (number)
 
 ### Advanced Buffering
@@ -629,6 +643,23 @@ const merged = wasmts.operation.linemerge.LineMerger.getMergedLineStrings(merger
 - `wasmts.operation.linemerge.LineMerger.create()` - Create a new LineMerger instance
 - `wasmts.operation.linemerge.LineMerger.add(merger, geometry)` - Add line(s) to merge
 - `wasmts.operation.linemerge.LineMerger.getMergedLineStrings(merger)` - Get array of merged linestrings
+
+### CascadedPolygonUnion
+
+**Efficient multi-polygon union** - Union many polygons at once (faster than sequential pairwise unions):
+
+```javascript
+const poly1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const poly2 = wasmts.io.WKTReader.read('POLYGON ((5 5, 15 5, 15 15, 5 15, 5 5))');
+const poly3 = wasmts.io.WKTReader.read('POLYGON ((10 10, 20 10, 20 20, 10 20, 10 10))');
+
+// Union all at once
+const union = wasmts.operation.union.CascadedPolygonUnion.union([poly1, poly2, poly3]);
+console.log('Union area:', union.getArea());
+```
+
+**API:**
+- `wasmts.operation.union.CascadedPolygonUnion.union(polygonArray)` - Union array of polygons
 
 ## Build System
 

@@ -15,10 +15,11 @@
   "type": "module",
   "main": "dist/wasmts.js",
   "scripts": {
-    "build:wasm": "mvn clean package",
+    "build:wasm": "mvn package",
     "build:js": "node js/build.mjs",
     "build": "npm run build:wasm && npm run build:js",
     "test": "node test/test-node.mjs",
+    "serve": "python3 -m http.server 8000",
     "clean": "mvn clean && rm -rf dist js/src"
   },
   "files": [

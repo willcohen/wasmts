@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- PreparedGeometry: all 11 predicates (`contains`, `containsProperly`, `covers`, `coveredBy`, `crosses`, `disjoint`, `intersects`, `overlaps`, `touches`, `within`, `getGeometry`)
+- MinimumDiameter: `getLength()` returns the minimum width
+
 ## [0.1.0-alpha2] - 2025-12-05
 
 ### Added

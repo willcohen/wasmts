@@ -427,6 +427,68 @@ function testPreparedGeometry() {
     assert(extracted.getArea() === 10000, 'extracted geometry has correct area');
     console.log('PASS: getGeometry returned original Polygon with area =', extracted.getArea());
 
+    // Test contains - PreparedGeometry.contains(prepared, geom)
+    const containsInside = wasmts.geom.prep.PreparedGeometry.contains(prepared, insidePoint);
+    assert(containsInside === true, 'contains returns true for inside point');
+    const containsOutside = wasmts.geom.prep.PreparedGeometry.contains(prepared, outsidePoint);
+    assert(containsOutside === false, 'contains returns false for outside point');
+    console.log('PASS: PreparedGeometry.contains works');
+
+    // Test covers - PreparedGeometry.covers(prepared, geom)
+    const coversInner = wasmts.geom.prep.PreparedGeometry.covers(prepared, innerPoly);
+    assert(coversInner === true, 'covers returns true for inner polygon');
+    const coversOutside = wasmts.geom.prep.PreparedGeometry.covers(prepared, outsidePoint);
+    assert(coversOutside === false, 'covers returns false for outside point');
+    console.log('PASS: PreparedGeometry.covers works');
+
+    // Test intersects - PreparedGeometry.intersects(prepared, geom)
+    const overlappingPoly = wasmts.io.WKTReader.read('POLYGON ((50 50, 150 50, 150 150, 50 150, 50 50))');
+    const intersectsOverlap = wasmts.geom.prep.PreparedGeometry.intersects(prepared, overlappingPoly);
+    assert(intersectsOverlap === true, 'intersects returns true for overlapping polygon');
+    const disjointPoly = wasmts.io.WKTReader.read('POLYGON ((200 200, 300 200, 300 300, 200 300, 200 200))');
+    const intersectsDisjoint = wasmts.geom.prep.PreparedGeometry.intersects(prepared, disjointPoly);
+    assert(intersectsDisjoint === false, 'intersects returns false for disjoint polygon');
+    console.log('PASS: PreparedGeometry.intersects works');
+
+    // Test disjoint - PreparedGeometry.disjoint(prepared, geom)
+    const disjointResult = wasmts.geom.prep.PreparedGeometry.disjoint(prepared, disjointPoly);
+    assert(disjointResult === true, 'disjoint returns true for disjoint polygon');
+    const notDisjoint = wasmts.geom.prep.PreparedGeometry.disjoint(prepared, overlappingPoly);
+    assert(notDisjoint === false, 'disjoint returns false for overlapping polygon');
+    console.log('PASS: PreparedGeometry.disjoint works');
+
+    // Test within - PreparedGeometry.within(prepared, geom)
+    const largerPoly = wasmts.io.WKTReader.read('POLYGON ((-10 -10, 110 -10, 110 110, -10 110, -10 -10))');
+    const withinLarger = wasmts.geom.prep.PreparedGeometry.within(prepared, largerPoly);
+    assert(withinLarger === true, 'within returns true when prepared is inside larger');
+    const withinSmaller = wasmts.geom.prep.PreparedGeometry.within(prepared, innerPoly);
+    assert(withinSmaller === false, 'within returns false when prepared is not inside smaller');
+    console.log('PASS: PreparedGeometry.within works');
+
+    // Test overlaps - PreparedGeometry.overlaps(prepared, geom)
+    const overlapsResult = wasmts.geom.prep.PreparedGeometry.overlaps(prepared, overlappingPoly);
+    assert(overlapsResult === true, 'overlaps returns true for overlapping polygon');
+    const overlapsContained = wasmts.geom.prep.PreparedGeometry.overlaps(prepared, innerPoly);
+    assert(overlapsContained === false, 'overlaps returns false for contained polygon');
+    console.log('PASS: PreparedGeometry.overlaps works');
+
+    // Test touches - PreparedGeometry.touches(prepared, geom)
+    const touchingPoly = wasmts.io.WKTReader.read('POLYGON ((100 0, 200 0, 200 100, 100 100, 100 0))');
+    const touchesResult = wasmts.geom.prep.PreparedGeometry.touches(prepared, touchingPoly);
+    assert(touchesResult === true, 'touches returns true for adjacent polygon');
+    const notTouches = wasmts.geom.prep.PreparedGeometry.touches(prepared, disjointPoly);
+    assert(notTouches === false, 'touches returns false for disjoint polygon');
+    console.log('PASS: PreparedGeometry.touches works');
+
+    // Test crosses - PreparedGeometry.crosses(prepared, geom)
+    const crossingLine = wasmts.io.WKTReader.read('LINESTRING (-10 50, 110 50)');
+    const crossesResult = wasmts.geom.prep.PreparedGeometry.crosses(prepared, crossingLine);
+    assert(crossesResult === true, 'crosses returns true for line crossing polygon');
+    const nonCrossingLine = wasmts.io.WKTReader.read('LINESTRING (10 10, 90 90)');
+    const notCrosses = wasmts.geom.prep.PreparedGeometry.crosses(prepared, nonCrossingLine);
+    assert(notCrosses === false, 'crosses returns false for line inside polygon');
+    console.log('PASS: PreparedGeometry.crosses works');
+
     // Performance comparison - run containsProperly multiple times
     const testPoints = [];
     for (let i = 0; i < 10; i++) {
@@ -437,6 +499,8 @@ function testPreparedGeometry() {
         wasmts.geom.prep.PreparedGeometry.containsProperly(prepared, pt);
     }
     console.log('PASS: Ran containsProperly on 10 test points');
+
+    console.log('PASS: All PreparedGeometry predicate tests completed');
 }
 
 function testRectangleAlgorithms() {

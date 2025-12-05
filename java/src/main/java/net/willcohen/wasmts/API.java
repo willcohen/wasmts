@@ -322,10 +322,55 @@ public class API {
         Object getGeometry(Object prepGeom);
     }
 
+    @FunctionalInterface
+    interface PreparedContainsFn {
+        Object contains(Object prepGeom, Object geom);
+    }
+
+    @FunctionalInterface
+    interface PreparedCoversFn {
+        Object covers(Object prepGeom, Object geom);
+    }
+
+    @FunctionalInterface
+    interface PreparedCrossesFn {
+        Object crosses(Object prepGeom, Object geom);
+    }
+
+    @FunctionalInterface
+    interface PreparedDisjointFn {
+        Object disjoint(Object prepGeom, Object geom);
+    }
+
+    @FunctionalInterface
+    interface PreparedIntersectsFn {
+        Object intersects(Object prepGeom, Object geom);
+    }
+
+    @FunctionalInterface
+    interface PreparedOverlapsFn {
+        Object overlaps(Object prepGeom, Object geom);
+    }
+
+    @FunctionalInterface
+    interface PreparedTouchesFn {
+        Object touches(Object prepGeom, Object geom);
+    }
+
+    @FunctionalInterface
+    interface PreparedWithinFn {
+        Object within(Object prepGeom, Object geom);
+    }
+
     // Geometry analysis algorithms
     @FunctionalInterface
-    interface MinimumDiameterFn {
+    interface MinimumDiameterGetRectFn {
         Object getMinimumRectangle(Object geom);
+    }
+
+    @FunctionalInterface
+    interface MinimumDiameterGetLengthFn {
+        Object getLength(Object geom);
     }
 
     @FunctionalInterface
@@ -784,10 +829,46 @@ public class API {
     @JS("wasmts.geom.prep.PreparedGeometry.getGeometry = (prepGeom) => fn.getGeometry(prepGeom);")
     private static native void exportPreparedGetGeometry(PreparedGetGeometryFn fn);
 
+    @JS.Coerce
+    @JS("wasmts.geom.prep.PreparedGeometry.contains = (prepGeom, geom) => fn.contains(prepGeom, geom);")
+    private static native void exportPreparedContains(PreparedContainsFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.prep.PreparedGeometry.covers = (prepGeom, geom) => fn.covers(prepGeom, geom);")
+    private static native void exportPreparedCovers(PreparedCoversFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.prep.PreparedGeometry.crosses = (prepGeom, geom) => fn.crosses(prepGeom, geom);")
+    private static native void exportPreparedCrosses(PreparedCrossesFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.prep.PreparedGeometry.disjoint = (prepGeom, geom) => fn.disjoint(prepGeom, geom);")
+    private static native void exportPreparedDisjoint(PreparedDisjointFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.prep.PreparedGeometry.intersects = (prepGeom, geom) => fn.intersects(prepGeom, geom);")
+    private static native void exportPreparedIntersects(PreparedIntersectsFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.prep.PreparedGeometry.overlaps = (prepGeom, geom) => fn.overlaps(prepGeom, geom);")
+    private static native void exportPreparedOverlaps(PreparedOverlapsFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.prep.PreparedGeometry.touches = (prepGeom, geom) => fn.touches(prepGeom, geom);")
+    private static native void exportPreparedTouches(PreparedTouchesFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.prep.PreparedGeometry.within = (prepGeom, geom) => fn.within(prepGeom, geom);")
+    private static native void exportPreparedWithin(PreparedWithinFn fn);
+
     // Geometry analysis algorithm exports (wasmts.algorithm.*)
     @JS.Coerce
     @JS("wasmts.algorithm.MinimumDiameter = wasmts.algorithm.MinimumDiameter || {}; wasmts.algorithm.MinimumDiameter.getMinimumRectangle = (geom) => fn.getMinimumRectangle(geom);")
-    private static native void exportMinimumDiameter(MinimumDiameterFn fn);
+    private static native void exportMinimumDiameterGetRect(MinimumDiameterGetRectFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.algorithm.MinimumDiameter.getLength = (geom) => fn.getLength(geom);")
+    private static native void exportMinimumDiameterGetLength(MinimumDiameterGetLengthFn fn);
 
     @JS.Coerce
     @JS("wasmts.algorithm.MinimumAreaRectangle = wasmts.algorithm.MinimumAreaRectangle || {}; wasmts.algorithm.MinimumAreaRectangle.getMinimumRectangle = (geom) => fn.getMinimumRectangle(geom);")
@@ -1747,12 +1828,66 @@ public class API {
         return createJSGeometry(JSString.of(g.getGeometryType()), g);
     }
 
+    private static Object preparedContainsJS(Object prepGeom, Object geom) {
+        PreparedGeometry pg = extractPreparedGeometry(prepGeom);
+        Geometry g = extractGeometry(geom);
+        return JSBoolean.of(pg.contains(g));
+    }
+
+    private static Object preparedCoversJS(Object prepGeom, Object geom) {
+        PreparedGeometry pg = extractPreparedGeometry(prepGeom);
+        Geometry g = extractGeometry(geom);
+        return JSBoolean.of(pg.covers(g));
+    }
+
+    private static Object preparedCrossesJS(Object prepGeom, Object geom) {
+        PreparedGeometry pg = extractPreparedGeometry(prepGeom);
+        Geometry g = extractGeometry(geom);
+        return JSBoolean.of(pg.crosses(g));
+    }
+
+    private static Object preparedDisjointJS(Object prepGeom, Object geom) {
+        PreparedGeometry pg = extractPreparedGeometry(prepGeom);
+        Geometry g = extractGeometry(geom);
+        return JSBoolean.of(pg.disjoint(g));
+    }
+
+    private static Object preparedIntersectsJS(Object prepGeom, Object geom) {
+        PreparedGeometry pg = extractPreparedGeometry(prepGeom);
+        Geometry g = extractGeometry(geom);
+        return JSBoolean.of(pg.intersects(g));
+    }
+
+    private static Object preparedOverlapsJS(Object prepGeom, Object geom) {
+        PreparedGeometry pg = extractPreparedGeometry(prepGeom);
+        Geometry g = extractGeometry(geom);
+        return JSBoolean.of(pg.overlaps(g));
+    }
+
+    private static Object preparedTouchesJS(Object prepGeom, Object geom) {
+        PreparedGeometry pg = extractPreparedGeometry(prepGeom);
+        Geometry g = extractGeometry(geom);
+        return JSBoolean.of(pg.touches(g));
+    }
+
+    private static Object preparedWithinJS(Object prepGeom, Object geom) {
+        PreparedGeometry pg = extractPreparedGeometry(prepGeom);
+        Geometry g = extractGeometry(geom);
+        return JSBoolean.of(pg.within(g));
+    }
+
     // Geometry analysis algorithm methods
-    private static Object minimumDiameterJS(Object geom) {
+    private static Object minimumDiameterGetRectJS(Object geom) {
         Geometry g = extractGeometry(geom);
         MinimumDiameter md = new MinimumDiameter(g);
         Geometry rect = md.getMinimumRectangle();
         return createJSGeometry(JSString.of(rect.getGeometryType()), rect);
+    }
+
+    private static Object minimumDiameterGetLengthJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        MinimumDiameter md = new MinimumDiameter(g);
+        return JSNumber.of(md.getLength());
     }
 
     private static Object minimumAreaRectangleJS(Object geom) {
@@ -2072,9 +2207,18 @@ public class API {
         exportPreparedContainsProperly(API::preparedContainsProperlyJS);
         exportPreparedCoveredBy(API::preparedCoveredByJS);
         exportPreparedGetGeometry(API::preparedGetGeometryJS);
+        exportPreparedContains(API::preparedContainsJS);
+        exportPreparedCovers(API::preparedCoversJS);
+        exportPreparedCrosses(API::preparedCrossesJS);
+        exportPreparedDisjoint(API::preparedDisjointJS);
+        exportPreparedIntersects(API::preparedIntersectsJS);
+        exportPreparedOverlaps(API::preparedOverlapsJS);
+        exportPreparedTouches(API::preparedTouchesJS);
+        exportPreparedWithin(API::preparedWithinJS);
 
         // Export geometry analysis algorithms
-        exportMinimumDiameter(API::minimumDiameterJS);
+        exportMinimumDiameterGetRect(API::minimumDiameterGetRectJS);
+        exportMinimumDiameterGetLength(API::minimumDiameterGetLengthJS);
         exportMinimumAreaRectangle(API::minimumAreaRectangleJS);
         exportMinimumBoundingCircleGetCircle(API::minimumBoundingCircleGetCircleJS);
         exportMinimumBoundingCircleGetCentre(API::minimumBoundingCircleGetCentreJS);
