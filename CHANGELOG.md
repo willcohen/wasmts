@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0-alpha2] - 2025-12-05
+
+### Added
+
+- Geometry factory: `createPoint()`, `createLineString()`, `createPolygon()` from coordinate arrays
+- GeoJSON I/O: `GeoJSONReader.read()`, `GeoJSONWriter.write()`
+- Polygon accessors: `getExteriorRing()`, `getInteriorRingN()`, `getNumInteriorRing()`
+- Distance: `nearestPoints()` returns closest points between geometries
+- MinimumBoundingCircle: `getCircle()`, `getCentre()`, `getRadius()`
+
 ## [0.1.0-alpha1] - 2025-10-16
 
 ### Initial Release

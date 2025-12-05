@@ -101,6 +101,18 @@ function runAllTests() {
     console.log('\n--- New Geometry Methods ---\n');
     testNewGeometryMethods();
 
+    console.log('\n--- GeoJSON I/O Tests ---\n');
+    testGeoJSONIO();
+
+    console.log('\n--- Polygon Accessors ---\n');
+    testPolygonAccessors();
+
+    console.log('\n--- Distance Operations ---\n');
+    testDistanceOperations();
+
+    console.log('\n--- Geometry Factory Methods ---\n');
+    testGeometryFactory();
+
     console.log('\n=== All Tests Passed PASS: ===\n');
 }
 
@@ -450,7 +462,7 @@ function testRectangleAlgorithms() {
     }
 
     // Test MinimumAreaRectangle - finds smallest bounding rectangle
-    const minAreaRect = wasmts.algorithm.MinimumBoundingCircle.getMinimumRectangle(polygon);
+    const minAreaRect = wasmts.algorithm.MinimumAreaRectangle.getMinimumRectangle(polygon);
     assert(minAreaRect !== null && minAreaRect !== undefined, 'minimumAreaRectangle returned geometry');
     assert(minAreaRect.type === 'Polygon' || minAreaRect.type === 'LineString' || minAreaRect.type === 'Point', 'minimumAreaRectangle returns geometry');
     console.log('PASS: MinimumAreaRectangle:', minAreaRect.type);
@@ -465,9 +477,23 @@ function testRectangleAlgorithms() {
         console.log('PASS: Minimum area rectangle contains original polygon');
     }
 
+    // Test MinimumBoundingCircle
+    const circle = wasmts.algorithm.MinimumBoundingCircle.getCircle(polygon);
+    assert(circle !== null && circle !== undefined, 'MinimumBoundingCircle.getCircle returned geometry');
+    assert(circle.type === 'Polygon', 'Bounding circle is a Polygon');
+    console.log('PASS: MinimumBoundingCircle.getCircle:', circle.type, 'area:', circle.getArea().toFixed(2));
+
+    const centre = wasmts.algorithm.MinimumBoundingCircle.getCentre(polygon);
+    assert(typeof centre.x === 'number' && typeof centre.y === 'number', 'getCentre returns coordinate');
+    console.log('PASS: MinimumBoundingCircle.getCentre:', centre);
+
+    const radius = wasmts.algorithm.MinimumBoundingCircle.getRadius(polygon);
+    assert(typeof radius === 'number' && radius > 0, 'getRadius returns positive number');
+    console.log('PASS: MinimumBoundingCircle.getRadius:', radius.toFixed(2));
+
     // Test with a simple triangle
     const triangle = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 5 10, 0 0))');
-    const triMinRect = wasmts.algorithm.MinimumBoundingCircle.getMinimumRectangle(triangle);
+    const triMinRect = wasmts.algorithm.MinimumAreaRectangle.getMinimumRectangle(triangle);
     console.log('PASS: Tested algorithms on triangle, result type:', triMinRect.type);
 }
 
@@ -730,12 +756,367 @@ function testNewGeometryMethods() {
     assert(retrievedData.name === 'test polygon', 'User data object properties preserved');
     console.log('PASS: getUserData/setUserData test');
 
+    // Test getGeometryType
+    const testPoint = wasmts.geom.createPoint(1, 2);
+    const pointType = wasmts.geom.getGeometryType(testPoint);
+    assert(pointType === 'Point', 'Point type should be "Point"');
+    console.log('PASS: getGeometryType for Point:', pointType);
+
+    const lineWkt = 'LINESTRING(0 0, 1 1, 2 0)';
+    const testLine = wasmts.io.WKTReader.read(lineWkt);
+    const lineType = wasmts.geom.getGeometryType(testLine);
+    assert(lineType === 'LineString', 'LineString type should be "LineString"');
+    console.log('PASS: getGeometryType for LineString:', lineType);
+
+    const polyWkt = 'POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))';
+    const testPoly = wasmts.io.WKTReader.read(polyWkt);
+    const polyType = wasmts.geom.getGeometryType(testPoly);
+    assert(polyType === 'Polygon', 'Polygon type should be "Polygon"');
+    console.log('PASS: getGeometryType for Polygon:', polyType);
+
     console.log('PASS: All new geometry methods tested');
+}
+
+function testGeoJSONIO() {
+    // Test GeoJSON namespace exists
+    assert(typeof wasmts.io.GeoJSONReader !== 'undefined', 'GeoJSONReader exists');
+    assert(typeof wasmts.io.GeoJSONWriter !== 'undefined', 'GeoJSONWriter exists');
+    console.log('PASS: GeoJSON namespaces exist');
+
+    // Test Point
+    const pointGeoJSON = '{"type":"Point","coordinates":[5,10]}';
+    const point = wasmts.io.GeoJSONReader.read(pointGeoJSON);
+    assert(point !== null && point !== undefined, 'GeoJSON Point parsed');
+    assert(point.type === 'Point', 'GeoJSON Point has correct type');
+    const pointCoords = point.getCoordinates();
+    assert(pointCoords[0].x === 5, 'Point X coordinate correct');
+    assert(pointCoords[0].y === 10, 'Point Y coordinate correct');
+    console.log('PASS: GeoJSON Point read:', pointCoords[0]);
+
+    // Test Point write
+    const pointOut = wasmts.io.GeoJSONWriter.write(point);
+    assert(typeof pointOut === 'string', 'GeoJSONWriter returns string');
+    const pointParsed = JSON.parse(pointOut);
+    assert(pointParsed.type === 'Point', 'Written GeoJSON has correct type');
+    assert(pointParsed.coordinates[0] === 5, 'Written coordinates correct');
+    console.log('PASS: GeoJSON Point write:', pointOut);
+
+    // Test LineString
+    const lineGeoJSON = '{"type":"LineString","coordinates":[[0,0],[10,10],[20,0]]}';
+    const line = wasmts.io.GeoJSONReader.read(lineGeoJSON);
+    assert(line.type === 'LineString', 'GeoJSON LineString parsed');
+    const lineCoords = line.getCoordinates();
+    assert(lineCoords.length === 3, 'LineString has 3 coordinates');
+    console.log('PASS: GeoJSON LineString read');
+
+    // Test LineString round-trip
+    const lineOut = wasmts.io.GeoJSONWriter.write(line);
+    const lineParsed = JSON.parse(lineOut);
+    assert(lineParsed.type === 'LineString', 'LineString round-trip type');
+    assert(lineParsed.coordinates.length === 3, 'LineString round-trip coords');
+    console.log('PASS: GeoJSON LineString round-trip');
+
+    // Test Polygon
+    const polyGeoJSON = '{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}';
+    const poly = wasmts.io.GeoJSONReader.read(polyGeoJSON);
+    assert(poly.type === 'Polygon', 'GeoJSON Polygon parsed');
+    const polyArea = poly.getArea();
+    assert(polyArea === 100, 'Polygon area is 100');
+    console.log('PASS: GeoJSON Polygon read, area:', polyArea);
+
+    // Test Polygon round-trip
+    const polyOut = wasmts.io.GeoJSONWriter.write(poly);
+    const polyParsed = JSON.parse(polyOut);
+    assert(polyParsed.type === 'Polygon', 'Polygon round-trip type');
+    assert(polyParsed.coordinates[0].length === 5, 'Polygon ring has 5 coords');
+    console.log('PASS: GeoJSON Polygon round-trip');
+
+    // Test Polygon with hole
+    const polyWithHoleGeoJSON = '{"type":"Polygon","coordinates":[[[0,0],[20,0],[20,20],[0,20],[0,0]],[[5,5],[15,5],[15,15],[5,15],[5,5]]]}';
+    const polyWithHole = wasmts.io.GeoJSONReader.read(polyWithHoleGeoJSON);
+    assert(polyWithHole.type === 'Polygon', 'Polygon with hole parsed');
+    const holeArea = polyWithHole.getArea();
+    assert(holeArea === 300, 'Polygon with hole area is 300 (400 - 100)');
+    console.log('PASS: GeoJSON Polygon with hole, area:', holeArea);
+
+    // Test MultiPoint
+    const multiPointGeoJSON = '{"type":"MultiPoint","coordinates":[[0,0],[10,10],[20,20]]}';
+    const multiPoint = wasmts.io.GeoJSONReader.read(multiPointGeoJSON);
+    assert(multiPoint.type === 'MultiPoint', 'GeoJSON MultiPoint parsed');
+    console.log('PASS: GeoJSON MultiPoint read');
+
+    // Test MultiLineString
+    const multiLineGeoJSON = '{"type":"MultiLineString","coordinates":[[[0,0],[10,10]],[[20,20],[30,30]]]}';
+    const multiLine = wasmts.io.GeoJSONReader.read(multiLineGeoJSON);
+    assert(multiLine.type === 'MultiLineString', 'GeoJSON MultiLineString parsed');
+    console.log('PASS: GeoJSON MultiLineString read');
+
+    // Test MultiPolygon
+    const multiPolyGeoJSON = '{"type":"MultiPolygon","coordinates":[[[[0,0],[10,0],[10,10],[0,10],[0,0]]],[[[20,20],[30,20],[30,30],[20,30],[20,20]]]]}';
+    const multiPoly = wasmts.io.GeoJSONReader.read(multiPolyGeoJSON);
+    assert(multiPoly.type === 'MultiPolygon', 'GeoJSON MultiPolygon parsed');
+    const multiPolyArea = multiPoly.getArea();
+    assert(multiPolyArea === 200, 'MultiPolygon area is 200');
+    console.log('PASS: GeoJSON MultiPolygon read, area:', multiPolyArea);
+
+    // Test GeometryCollection
+    const gcGeoJSON = '{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[0,0]},{"type":"LineString","coordinates":[[0,0],[10,10]]}]}';
+    const gc = wasmts.io.GeoJSONReader.read(gcGeoJSON);
+    assert(gc.type === 'GeometryCollection', 'GeoJSON GeometryCollection parsed');
+    console.log('PASS: GeoJSON GeometryCollection read');
+
+    // Test 3D coordinates
+    const point3dGeoJSON = '{"type":"Point","coordinates":[5,10,15]}';
+    const point3d = wasmts.io.GeoJSONReader.read(point3dGeoJSON);
+    const coords3d = point3d.getCoordinates();
+    assert(coords3d[0].z === 15, '3D Point Z coordinate preserved');
+    console.log('PASS: GeoJSON 3D Point read, z:', coords3d[0].z);
+
+    // Test 3D round-trip
+    const point3dOut = wasmts.io.GeoJSONWriter.write(point3d);
+    const point3dParsed = JSON.parse(point3dOut);
+    assert(point3dParsed.coordinates.length === 3, '3D Point has 3 coordinates');
+    assert(point3dParsed.coordinates[2] === 15, '3D Z coordinate in output');
+    console.log('PASS: GeoJSON 3D round-trip');
+
+    // Test buffer result to GeoJSON
+    const buffered = wasmts.geom.createPoint(0, 0).buffer(10);
+    const bufferedGeoJSON = wasmts.io.GeoJSONWriter.write(buffered);
+    const bufferedParsed = JSON.parse(bufferedGeoJSON);
+    assert(bufferedParsed.type === 'Polygon', 'Buffered point is Polygon in GeoJSON');
+    assert(bufferedParsed.coordinates[0].length > 10, 'Buffer has many vertices');
+    console.log('PASS: Buffer to GeoJSON, vertices:', bufferedParsed.coordinates[0].length);
+
+    console.log('PASS: All GeoJSON I/O tests completed');
+}
+
+function testPolygonAccessors() {
+    // Test polygon without holes
+    const simplePoly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+
+    // Test getExteriorRing
+    const exteriorRing = simplePoly.getExteriorRing();
+    assert(exteriorRing !== null && exteriorRing !== undefined, 'getExteriorRing returns geometry');
+    assert(exteriorRing.type === 'LinearRing', 'Exterior ring is LinearRing');
+    const ringCoords = exteriorRing.getCoordinates();
+    assert(ringCoords.length === 5, 'Exterior ring has 5 coordinates (closed)');
+    console.log('PASS: getExteriorRing returns LinearRing with', ringCoords.length, 'coordinates');
+
+    // Test getNumInteriorRing on polygon without holes
+    const numInterior = simplePoly.getNumInteriorRing();
+    assert(numInterior === 0, 'Simple polygon has 0 interior rings');
+    console.log('PASS: getNumInteriorRing returns 0 for simple polygon');
+
+    // Test polygon with hole
+    const polyWithHole = wasmts.io.WKTReader.read('POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0), (5 5, 15 5, 15 15, 5 15, 5 5))');
+    const numHoles = polyWithHole.getNumInteriorRing();
+    assert(numHoles === 1, 'Polygon with hole has 1 interior ring');
+    console.log('PASS: getNumInteriorRing returns 1 for polygon with hole');
+
+    // Test getInteriorRingN
+    const hole = polyWithHole.getInteriorRingN(0);
+    assert(hole !== null && hole !== undefined, 'getInteriorRingN returns geometry');
+    assert(hole.type === 'LinearRing', 'Interior ring is LinearRing');
+    const holeCoords = hole.getCoordinates();
+    assert(holeCoords.length === 5, 'Interior ring has 5 coordinates (closed)');
+    console.log('PASS: getInteriorRingN returns interior ring with', holeCoords.length, 'coordinates');
+
+    // Verify hole coordinates
+    assert(holeCoords[0].x === 5, 'First hole coordinate X is 5');
+    assert(holeCoords[0].y === 5, 'First hole coordinate Y is 5');
+    console.log('PASS: Interior ring coordinates are correct');
+
+    // Test polygon with multiple holes
+    const multiHolePoly = wasmts.io.WKTReader.read('POLYGON ((0 0, 30 0, 30 30, 0 30, 0 0), (2 2, 8 2, 8 8, 2 8, 2 2), (12 12, 18 12, 18 18, 12 18, 12 12))');
+    const numMultiHoles = multiHolePoly.getNumInteriorRing();
+    assert(numMultiHoles === 2, 'Polygon has 2 interior rings');
+    console.log('PASS: getNumInteriorRing returns 2 for polygon with 2 holes');
+
+    // Test getting both interior rings
+    const hole1 = multiHolePoly.getInteriorRingN(0);
+    const hole2 = multiHolePoly.getInteriorRingN(1);
+    assert(hole1 !== null && hole2 !== null, 'Both interior rings accessible');
+    console.log('PASS: Both interior rings accessible via getInteriorRingN');
+
+    // Test functional API (wasmts.geom.*)
+    const exteriorFunctional = wasmts.geom.getExteriorRing(simplePoly);
+    assert(exteriorFunctional.type === 'LinearRing', 'Functional API getExteriorRing works');
+    console.log('PASS: Functional API wasmts.geom.getExteriorRing works');
+
+    const numRingsFunctional = wasmts.geom.getNumInteriorRing(polyWithHole);
+    assert(numRingsFunctional === 1, 'Functional API getNumInteriorRing works');
+    console.log('PASS: Functional API wasmts.geom.getNumInteriorRing works');
+
+    const holeFunctional = wasmts.geom.getInteriorRingN(polyWithHole, 0);
+    assert(holeFunctional.type === 'LinearRing', 'Functional API getInteriorRingN works');
+    console.log('PASS: Functional API wasmts.geom.getInteriorRingN works');
+
+    // Test error handling for non-polygon
+    let errorThrown = false;
+    try {
+        const point = wasmts.geom.createPoint(5, 10);
+        wasmts.geom.getExteriorRing(point);
+    } catch (e) {
+        errorThrown = true;
+    }
+    assert(errorThrown, 'getExteriorRing throws error for non-polygon');
+    console.log('PASS: getExteriorRing throws error for non-polygon geometry');
+
+    console.log('PASS: All polygon accessor tests completed');
+}
+
+function testDistanceOperations() {
+    // Test nearestPoints between two disjoint geometries
+    const poly1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+    const poly2 = wasmts.io.WKTReader.read('POLYGON ((20 0, 30 0, 30 10, 20 10, 20 0))');
+
+    const nearest = wasmts.geom.nearestPoints(poly1, poly2);
+    assert(Array.isArray(nearest), 'nearestPoints returns array');
+    assert(nearest.length === 2, 'nearestPoints returns 2 points');
+    console.log('PASS: nearestPoints returns array of 2 points');
+
+    // Verify both points have x/y coordinates
+    assert(typeof nearest[0].x === 'number', 'First point has x coordinate');
+    assert(typeof nearest[0].y === 'number', 'First point has y coordinate');
+    assert(typeof nearest[1].x === 'number', 'Second point has x coordinate');
+    assert(typeof nearest[1].y === 'number', 'Second point has y coordinate');
+    console.log('PASS: nearestPoints coordinates:', nearest[0], '->', nearest[1]);
+
+    // Verify distance matches calculated distance from nearest points
+    const dist = poly1.distance(poly2);
+    const calculatedDist = Math.sqrt(
+        Math.pow(nearest[1].x - nearest[0].x, 2) +
+        Math.pow(nearest[1].y - nearest[0].y, 2)
+    );
+    assert(Math.abs(dist - calculatedDist) < 0.001, 'Distance matches calculated from nearest points');
+    console.log('PASS: Distance between geometries:', dist);
+
+    // Test with point and line
+    const point = wasmts.geom.createPoint(5, 5);
+    const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 0)');
+    const nearestPtLine = wasmts.geom.nearestPoints(point, line);
+    assert(nearestPtLine.length === 2, 'Point-line returns 2 points');
+    // First point should be the original point, second should be on the line
+    assert(nearestPtLine[0].y === 5 || nearestPtLine[1].y === 5, 'One point at y=5 (original point)');
+    assert(nearestPtLine[0].y === 0 || nearestPtLine[1].y === 0, 'One point at y=0 (on line)');
+    console.log('PASS: Point to line nearest points:', nearestPtLine[0], '->', nearestPtLine[1]);
+
+    console.log('PASS: All distance operation tests completed');
+}
+
+function testGeometryFactory() {
+    // Test createLineString
+    const lineCoords = [
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+        { x: 20, y: 0 }
+    ];
+    const line = wasmts.geom.createLineString(lineCoords);
+    assert(line !== null, 'createLineString returns geometry');
+    assert(line.type === 'LineString', 'createLineString creates LineString');
+    assert(line.getNumPoints() === 3, 'LineString has 3 points');
+    const retrievedCoords = line.getCoordinates();
+    assert(retrievedCoords[0].x === 0 && retrievedCoords[0].y === 0, 'First coordinate correct');
+    assert(retrievedCoords[1].x === 10 && retrievedCoords[1].y === 10, 'Second coordinate correct');
+    assert(retrievedCoords[2].x === 20 && retrievedCoords[2].y === 0, 'Third coordinate correct');
+    console.log('PASS: createLineString creates valid LineString');
+
+    // Test createLineString with 3D coordinates
+    const line3DCoords = [
+        { x: 0, y: 0, z: 0 },
+        { x: 10, y: 10, z: 5 },
+        { x: 20, y: 0, z: 10 }
+    ];
+    const line3D = wasmts.geom.createLineString(line3DCoords);
+    assert(line3D.type === 'LineString', 'createLineString creates 3D LineString');
+    const coords3D = line3D.getCoordinates();
+    assert(coords3D[1].z === 5, '3D LineString preserves Z coordinate');
+    console.log('PASS: createLineString supports 3D coordinates');
+
+    // Test createPolygon (simple polygon without holes)
+    const shellCoords = [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+        { x: 0, y: 0 }  // Closed ring
+    ];
+    const polygon = wasmts.geom.createPolygon(shellCoords);
+    assert(polygon !== null, 'createPolygon returns geometry');
+    assert(polygon.type === 'Polygon', 'createPolygon creates Polygon');
+    const area = polygon.getArea();
+    assert(area === 10000, 'Polygon has correct area');
+    assert(polygon.getNumInteriorRing() === 0, 'Simple polygon has no holes');
+    console.log('PASS: createPolygon creates valid Polygon, area:', area);
+
+    // Test createPolygon with holes
+    const holeCoords = [
+        { x: 25, y: 25 },
+        { x: 75, y: 25 },
+        { x: 75, y: 75 },
+        { x: 25, y: 75 },
+        { x: 25, y: 25 }  // Closed ring
+    ];
+    const polygonWithHole = wasmts.geom.createPolygon(shellCoords, [holeCoords]);
+    assert(polygonWithHole !== null, 'createPolygon with hole returns geometry');
+    assert(polygonWithHole.type === 'Polygon', 'createPolygon creates Polygon with hole');
+    assert(polygonWithHole.getNumInteriorRing() === 1, 'Polygon has 1 hole');
+    const areaWithHole = polygonWithHole.getArea();
+    assert(areaWithHole === 7500, 'Polygon area minus hole area is correct');  // 10000 - 2500 = 7500
+    console.log('PASS: createPolygon with hole, area:', areaWithHole);
+
+    // Test createPolygon with multiple holes
+    const hole1 = [
+        { x: 10, y: 10 },
+        { x: 30, y: 10 },
+        { x: 30, y: 30 },
+        { x: 10, y: 30 },
+        { x: 10, y: 10 }
+    ];
+    const hole2 = [
+        { x: 60, y: 60 },
+        { x: 90, y: 60 },
+        { x: 90, y: 90 },
+        { x: 60, y: 90 },
+        { x: 60, y: 60 }
+    ];
+    const polygonTwoHoles = wasmts.geom.createPolygon(shellCoords, [hole1, hole2]);
+    assert(polygonTwoHoles.getNumInteriorRing() === 2, 'Polygon has 2 holes');
+    const areaTwoHoles = polygonTwoHoles.getArea();
+    // hole1: 20*20 = 400, hole2: 30*30 = 900, total = 10000 - 400 - 900 = 8700
+    assert(areaTwoHoles === 8700, 'Polygon area with 2 holes correct');
+    console.log('PASS: createPolygon with 2 holes, area:', areaTwoHoles);
+
+    // Test createPolygon with 3D coordinates
+    const shell3D = [
+        { x: 0, y: 0, z: 0 },
+        { x: 10, y: 0, z: 0 },
+        { x: 10, y: 10, z: 0 },
+        { x: 0, y: 10, z: 0 },
+        { x: 0, y: 0, z: 0 }
+    ];
+    const polygon3D = wasmts.geom.createPolygon(shell3D);
+    assert(polygon3D.type === 'Polygon', 'createPolygon creates 3D Polygon');
+    const poly3DCoords = polygon3D.getCoordinates();
+    assert(poly3DCoords[0].z === 0, '3D Polygon preserves Z coordinate');
+    console.log('PASS: createPolygon supports 3D coordinates');
+
+    // Test that created geometries can be used in operations
+    const buffered = line.buffer(5);
+    assert(buffered.type === 'Polygon', 'Created LineString can be buffered');
+    console.log('PASS: Created geometries work with operations');
+
+    // Test validation - created polygon is valid
+    assert(polygon.isValid() === true, 'Created polygon is valid');
+    assert(polygonWithHole.isValid() === true, 'Created polygon with hole is valid');
+    console.log('PASS: Created polygons are valid');
+
+    console.log('PASS: All geometry factory tests completed');
 }
 
 function assert(condition, message) {
     if (!condition) {
-        console.error('✗ Assertion failed:', message);
+        console.error('Assertion failed:', message);
         console.error('   Condition value:', condition);
         console.error('   Condition type:', typeof condition);
         throw new Error(`Assertion failed: ${message}`);

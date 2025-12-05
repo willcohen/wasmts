@@ -39,6 +39,7 @@ import org.locationtech.jts.operation.buffer.BufferOp;
 import org.locationtech.jts.operation.buffer.OffsetCurveBuilder;
 import org.locationtech.jts.operation.linemerge.LineMerger;
 import org.locationtech.jts.operation.union.CascadedPolygonUnion;
+import org.locationtech.jts.operation.distance.DistanceOp;
 import java.util.List;
 import java.util.Collection;
 import java.util.ArrayList;
@@ -73,6 +74,16 @@ public class API {
     @FunctionalInterface
     interface CreatePoint4DFn {
         Object create(Object x, Object y, Object z, Object m);
+    }
+
+    @FunctionalInterface
+    interface CreateLineStringFn {
+        Object create(Object coords);
+    }
+
+    @FunctionalInterface
+    interface CreatePolygonFn {
+        Object create(Object shell, Object holes);
     }
 
     // CreateLineFn and other array-based interfaces removed - use WKT/WKB instead
@@ -202,6 +213,11 @@ public class API {
     }
 
     @FunctionalInterface
+    interface GetGeometryTypeFn {
+        Object getGeometryType(Object geom);
+    }
+
+    @FunctionalInterface
     interface IsEmptyFn {
         Object isEmpty(Object geom);
     }
@@ -317,6 +333,21 @@ public class API {
         Object getMinimumRectangle(Object geom);
     }
 
+    @FunctionalInterface
+    interface MinimumBoundingCircleGetCircleFn {
+        Object getCircle(Object geom);
+    }
+
+    @FunctionalInterface
+    interface MinimumBoundingCircleGetCentreFn {
+        Object getCentre(Object geom);
+    }
+
+    @FunctionalInterface
+    interface MinimumBoundingCircleGetRadiusFn {
+        Object getRadius(Object geom);
+    }
+
     // Offset curve
     @FunctionalInterface
     interface OffsetCurveFn {
@@ -406,6 +437,39 @@ public class API {
         void setUserData(Object geom, Object data);
     }
 
+    // GeoJSON I/O interfaces
+    @FunctionalInterface
+    interface ReadGeoJSONFn {
+        Object read(Object geojson);
+    }
+
+    @FunctionalInterface
+    interface WriteGeoJSONFn {
+        Object write(Object geom);
+    }
+
+    // Distance operation interfaces
+    @FunctionalInterface
+    interface NearestPointsFn {
+        Object nearestPoints(Object geom1, Object geom2);
+    }
+
+    // Polygon accessor interfaces
+    @FunctionalInterface
+    interface GetExteriorRingFn {
+        Object getExteriorRing(Object geom);
+    }
+
+    @FunctionalInterface
+    interface GetInteriorRingNFn {
+        Object getInteriorRingN(Object geom, Object n);
+    }
+
+    @FunctionalInterface
+    interface GetNumInteriorRingFn {
+        Object getNumInteriorRing(Object geom);
+    }
+
     // Export methods - WasmTS namespace structure
 
     // Initialize namespace structure
@@ -450,7 +514,13 @@ public class API {
     """)
     private static native void exportCreatePoint(CreatePointFn fn2d, CreatePoint3DFn fn3d, CreatePoint4DFn fn4d);
 
-    // Array-based geometry creation removed - use WKT/WKB for LineString, Polygon, etc.
+    @JS.Coerce
+    @JS("wasmts.geom.createLineString = (coords) => fn.create(coords);")
+    private static native void exportCreateLineString(CreateLineStringFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.createPolygon = (shell, holes) => fn.create(shell, holes ?? null);")
+    private static native void exportCreatePolygon(CreatePolygonFn fn);
 
     @JS.Coerce
     @JS("wasmts.geom.createEnvelope = (minX, maxX, minY, maxY) => fn.create(minX, maxX, minY, maxY);")
@@ -573,8 +643,16 @@ public class API {
     private static native void exportDistance(DistanceFn fn);
 
     @JS.Coerce
+    @JS("wasmts.geom.nearestPoints = (g1, g2) => fn.nearestPoints(g1, g2);")
+    private static native void exportNearestPoints(NearestPointsFn fn);
+
+    @JS.Coerce
     @JS("wasmts.geom.getNumPoints = (geom) => fn.getNumPoints(geom);")
     private static native void exportGetNumPoints(GetNumPointsFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.getGeometryType = (geom) => fn.getGeometryType(geom);")
+    private static native void exportGetGeometryType(GetGeometryTypeFn fn);
 
     @JS.Coerce
     @JS("wasmts.geom.isEmpty = (geom) => fn.isEmpty(geom);")
@@ -613,6 +691,19 @@ public class API {
     @JS("wasmts.geom.getGeometryN = (geom, n) => fn.getGeometryN(geom, n);")
     private static native void exportGetGeometryN(GetGeometryNFn fn);
 
+    // Polygon accessors
+    @JS.Coerce
+    @JS("wasmts.geom.getExteriorRing = (geom) => fn.getExteriorRing(geom);")
+    private static native void exportGetExteriorRing(GetExteriorRingFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.getInteriorRingN = (geom, n) => fn.getInteriorRingN(geom, n);")
+    private static native void exportGetInteriorRingN(GetInteriorRingNFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.getNumInteriorRing = (geom) => fn.getNumInteriorRing(geom);")
+    private static native void exportGetNumInteriorRing(GetNumInteriorRingFn fn);
+
     // WKT/WKB I/O (wasmts.io.*)
     @JS.Coerce
     @JS("wasmts.io.WKTReader = wasmts.io.WKTReader || {}; wasmts.io.WKTReader.read = (wkt) => fn.read(wkt);")
@@ -629,6 +720,14 @@ public class API {
     @JS.Coerce
     @JS("wasmts.io.WKBWriter = wasmts.io.WKBWriter || {}; wasmts.io.WKBWriter.write = (geom) => fn.write(geom);")
     private static native void exportWriteWKB(WriteWKBFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.io.GeoJSONReader = wasmts.io.GeoJSONReader || {}; wasmts.io.GeoJSONReader.read = (geojson) => fn.read(geojson);")
+    private static native void exportReadGeoJSON(ReadGeoJSONFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.io.GeoJSONWriter = wasmts.io.GeoJSONWriter || {}; wasmts.io.GeoJSONWriter.write = (geom) => fn.write(geom);")
+    private static native void exportWriteGeoJSON(WriteGeoJSONFn fn);
 
     // Envelope exports (already defined earlier, keeping near createEnvelope at line 310)
     @JS.Coerce
@@ -691,8 +790,20 @@ public class API {
     private static native void exportMinimumDiameter(MinimumDiameterFn fn);
 
     @JS.Coerce
-    @JS("wasmts.algorithm.MinimumBoundingCircle = wasmts.algorithm.MinimumBoundingCircle || {}; wasmts.algorithm.MinimumBoundingCircle.getMinimumRectangle = (geom) => fn.getMinimumRectangle(geom);")
+    @JS("wasmts.algorithm.MinimumAreaRectangle = wasmts.algorithm.MinimumAreaRectangle || {}; wasmts.algorithm.MinimumAreaRectangle.getMinimumRectangle = (geom) => fn.getMinimumRectangle(geom);")
     private static native void exportMinimumAreaRectangle(MinimumAreaRectangleFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.algorithm.MinimumBoundingCircle = wasmts.algorithm.MinimumBoundingCircle || {}; wasmts.algorithm.MinimumBoundingCircle.getCircle = (geom) => fn.getCircle(geom);")
+    private static native void exportMinimumBoundingCircleGetCircle(MinimumBoundingCircleGetCircleFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.algorithm.MinimumBoundingCircle.getCentre = (geom) => fn.getCentre(geom);")
+    private static native void exportMinimumBoundingCircleGetCentre(MinimumBoundingCircleGetCentreFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.algorithm.MinimumBoundingCircle.getRadius = (geom) => fn.getRadius(geom);")
+    private static native void exportMinimumBoundingCircleGetRadius(MinimumBoundingCircleGetRadiusFn fn);
 
     // Offset curve exports (wasmts.operation.buffer.OffsetCurveBuilder.*)
     @JS.Coerce
@@ -755,6 +866,7 @@ public class API {
         g.getLength = () => wasmts.geom.getLength(g);
         g.distance = (other) => wasmts.geom.distance(g, other);
         g.getNumPoints = () => wasmts.geom.getNumPoints(g);
+        g.getGeometryType = () => wasmts.geom.getGeometryType(g);
         g.isEmpty = () => wasmts.geom.isEmpty(g);
         g.isValid = () => wasmts.geom.isValid(g);
         g.isSimple = () => wasmts.geom.isSimple(g);
@@ -765,6 +877,11 @@ public class API {
         g.getNumGeometries = () => wasmts.geom.getNumGeometries(g);
         g.getGeometryN = (n) => wasmts.geom.getGeometryN(g, n);
         g.getEnvelopeInternal = () => wasmts.geom.getEnvelopeInternal(g);
+
+        // Polygon accessors (from JTS Polygon)
+        g.getExteriorRing = () => wasmts.geom.getExteriorRing(g);
+        g.getInteriorRingN = (n) => wasmts.geom.getInteriorRingN(g, n);
+        g.getNumInteriorRing = () => wasmts.geom.getNumInteriorRing(g);
 
         // User data (from JTS Geometry)
         g.getUserData = () => wasmts.geom.getUserData(g);
@@ -878,6 +995,45 @@ public class API {
         Point point = factory.createPoint(coord);
 
         return createJSGeometry(JSString.of("Point"), point);
+    }
+
+    // Extract coordinate parts from JS object {x, y, z?, m?}
+    @JS("return { x: obj.x, y: obj.y, hasZ: obj.z !== undefined && obj.z !== null, hasM: obj.m !== undefined && obj.m !== null, z: obj.z || 0, m: obj.m || 0 };")
+    private static native JSObject extractCoordParts(JSObject obj);
+
+    private static Coordinate[] extractCoordinateArray(Object coordsArray) {
+        int len = getJSArrayLength(coordsArray).asInt();
+        Coordinate[] coords = new Coordinate[len];
+        for (int i = 0; i < len; i++) {
+            JSObject p = extractCoordParts((JSObject) getJSArrayElement(coordsArray, i));
+            double x = ((JSValue) p.get("x")).asDouble();
+            double y = ((JSValue) p.get("y")).asDouble();
+            boolean hasZ = ((JSValue) p.get("hasZ")).asBoolean();
+            boolean hasM = ((JSValue) p.get("hasM")).asBoolean();
+            if (hasZ && hasM)
+                coords[i] = new CoordinateXYZM(x, y, ((JSValue) p.get("z")).asDouble(), ((JSValue) p.get("m")).asDouble());
+            else if (hasZ)
+                coords[i] = new Coordinate(x, y, ((JSValue) p.get("z")).asDouble());
+            else
+                coords[i] = new Coordinate(x, y);
+        }
+        return coords;
+    }
+
+    private static Object createLineStringJS(Object coords) {
+        return createJSGeometry(JSString.of("LineString"), factory.createLineString(extractCoordinateArray(coords)));
+    }
+
+    private static Object createPolygonJS(Object shell, Object holes) {
+        LinearRing shellRing = factory.createLinearRing(extractCoordinateArray(shell));
+        LinearRing[] holeRings = null;
+        if (holes != null) {
+            int n = getJSArrayLength(holes).asInt();
+            holeRings = new LinearRing[n];
+            for (int i = 0; i < n; i++)
+                holeRings[i] = factory.createLinearRing(extractCoordinateArray(getJSArrayElement(holes, i)));
+        }
+        return createJSGeometry(JSString.of("Polygon"), factory.createPolygon(shellRing, holeRings));
     }
 
     private static Object bufferJS(Object geom, Object distance, Object endCapStyle, Object joinStyle, Object mitreLimit) {
@@ -1042,9 +1198,31 @@ public class API {
         return JSNumber.of(geom1.distance(geom2));
     }
 
+    private static Object nearestPointsJS(Object g1, Object g2) {
+        Geometry geom1 = extractGeometry(g1);
+        Geometry geom2 = extractGeometry(g2);
+        Coordinate[] coords = DistanceOp.nearestPoints(geom1, geom2);
+        // Return array of {x, y, z?} coordinate objects (like getCoordinates)
+        JSObject result = createJSArray();
+        for (Coordinate c : coords) {
+            JSNumber xNum = JSNumber.of(c.getX());
+            JSNumber yNum = JSNumber.of(c.getY());
+            boolean hasZ = !Double.isNaN(c.getZ());
+            JSObject coordObj = hasZ ? createCoordObject3D(xNum, yNum, JSNumber.of(c.getZ()))
+                                     : createCoordObject(xNum, yNum);
+            pushToJSArray(result, coordObj);
+        }
+        return result;
+    }
+
     private static Object getNumPointsJS(Object geom) {
         Geometry g = extractGeometry(geom);
         return JSNumber.of(g.getNumPoints());
+    }
+
+    private static Object getGeometryTypeJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        return JSString.of(g.getGeometryType());
     }
 
     private static Object isEmptyJS(Object geom) {
@@ -1183,6 +1361,293 @@ public class API {
         }
     }
 
+    // GeoJSON I/O - uses JS JSON.parse/stringify to avoid Java JSON library dependencies
+    // Converts GeoJSON <-> WKT internally
+
+    @JS("return JSON.parse(str);")
+    private static native JSObject parseJSON(JSString str);
+
+    @JS("return JSON.stringify(obj);")
+    private static native JSString stringifyJSON(JSObject obj);
+
+    @JS("return obj.type;")
+    private static native JSString getJSONType(JSObject obj);
+
+    @JS("return obj.coordinates;")
+    private static native Object getJSONCoordinates(JSObject obj);
+
+    @JS("return obj.geometries;")
+    private static native Object getJSONGeometries(JSObject obj);
+
+    @JS("return arr.length;")
+    private static native JSValue getGeoJSONArrayLength(Object arr);
+
+    @JS("return arr[i];")
+    private static native Object getGeoJSONArrayElement(Object arr, int i);
+
+    @JS("return typeof val === 'number';")
+    private static native JSValue isJSNumberValue(Object val);
+
+    @JS("return Number(val);")
+    private static native JSValue asJSDoubleValue(Object val);
+
+    // Wrapper helpers
+    private static int getArrayLength(Object arr) {
+        return getGeoJSONArrayLength(arr).asInt();
+    }
+
+    private static Object getArrayElement(Object arr, int i) {
+        return getGeoJSONArrayElement(arr, i);
+    }
+
+    private static boolean isJSNumber(Object val) {
+        return isJSNumberValue(val).asBoolean();
+    }
+
+    private static double asJSDouble(Object val) {
+        return asJSDoubleValue(val).asDouble();
+    }
+
+    @JS("return { type: type, coordinates: coords };")
+    private static native JSObject createGeoJSONGeom(JSString type, Object coords);
+
+    @JS("return { type: 'GeometryCollection', geometries: geoms };")
+    private static native JSObject createGeoJSONCollection(Object geoms);
+
+    // Convert GeoJSON coordinates array to WKT coordinate string
+    private static String coordsToWkt(Object coords) {
+        int len = getArrayLength(coords);
+        if (len == 0) return "";
+
+        Object first = getArrayElement(coords, 0);
+        // Check if first element is a number (single coord) or array (nested)
+        if (isJSNumber(first)) {
+            // Single coordinate: [x, y] or [x, y, z]
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < len; i++) {
+                if (i > 0) sb.append(" ");
+                sb.append(asJSDouble(getArrayElement(coords, i)));
+            }
+            return sb.toString();
+        } else {
+            // Array of coordinates or nested arrays
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < len; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(coordsToWkt(getArrayElement(coords, i)));
+            }
+            return sb.toString();
+        }
+    }
+
+    // Convert GeoJSON ring to WKT ring string (with parentheses)
+    private static String ringToWkt(Object ring) {
+        return "(" + coordsToWkt(ring) + ")";
+    }
+
+    // Convert GeoJSON polygon rings to WKT
+    private static String polygonRingsToWkt(Object rings) {
+        int len = getArrayLength(rings);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < len; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(ringToWkt(getArrayElement(rings, i)));
+        }
+        return sb.toString();
+    }
+
+    // Convert parsed GeoJSON object to WKT string
+    private static String geoJsonToWkt(JSObject geom) {
+        String type = getJSONType(geom).asString();
+        Object coords = getJSONCoordinates(geom);
+
+        switch (type) {
+            case "Point":
+                return "POINT (" + coordsToWkt(coords) + ")";
+
+            case "MultiPoint": {
+                int len = getArrayLength(coords);
+                StringBuilder sb = new StringBuilder("MULTIPOINT (");
+                for (int i = 0; i < len; i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append("(").append(coordsToWkt(getArrayElement(coords, i))).append(")");
+                }
+                sb.append(")");
+                return sb.toString();
+            }
+
+            case "LineString":
+                return "LINESTRING (" + coordsToWkt(coords) + ")";
+
+            case "MultiLineString": {
+                int len = getArrayLength(coords);
+                StringBuilder sb = new StringBuilder("MULTILINESTRING (");
+                for (int i = 0; i < len; i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append(ringToWkt(getArrayElement(coords, i)));
+                }
+                sb.append(")");
+                return sb.toString();
+            }
+
+            case "Polygon":
+                return "POLYGON (" + polygonRingsToWkt(coords) + ")";
+
+            case "MultiPolygon": {
+                int len = getArrayLength(coords);
+                StringBuilder sb = new StringBuilder("MULTIPOLYGON (");
+                for (int i = 0; i < len; i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append("(").append(polygonRingsToWkt(getArrayElement(coords, i))).append(")");
+                }
+                sb.append(")");
+                return sb.toString();
+            }
+
+            case "GeometryCollection": {
+                Object geometries = getJSONGeometries(geom);
+                int len = getArrayLength(geometries);
+                StringBuilder sb = new StringBuilder("GEOMETRYCOLLECTION (");
+                for (int i = 0; i < len; i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append(geoJsonToWkt((JSObject) getArrayElement(geometries, i)));
+                }
+                sb.append(")");
+                return sb.toString();
+            }
+
+            default:
+                throw new RuntimeException("Unknown GeoJSON geometry type: " + type);
+        }
+    }
+
+    // Convert JTS Coordinate array to JS array for GeoJSON
+    @JS("return [];")
+    private static native JSObject createEmptyArray();
+
+    @JS("arr.push(val);")
+    private static native void arrayPush(JSObject arr, Object val);
+
+    private static JSObject coordToJSArray(Coordinate c) {
+        JSObject arr = createEmptyArray();
+        arrayPush(arr, JSNumber.of(c.getX()));
+        arrayPush(arr, JSNumber.of(c.getY()));
+        if (!Double.isNaN(c.getZ())) {
+            arrayPush(arr, JSNumber.of(c.getZ()));
+        }
+        return arr;
+    }
+
+    private static JSObject coordsToJSArray(Coordinate[] coords) {
+        JSObject arr = createEmptyArray();
+        for (Coordinate c : coords) {
+            arrayPush(arr, coordToJSArray(c));
+        }
+        return arr;
+    }
+
+    // Convert JTS Geometry to GeoJSON JS object
+    private static JSObject geometryToGeoJson(Geometry geom) {
+        String type = geom.getGeometryType();
+
+        switch (type) {
+            case "Point": {
+                Point p = (Point) geom;
+                JSObject coords = coordToJSArray(p.getCoordinate());
+                return createGeoJSONGeom(JSString.of("Point"), coords);
+            }
+
+            case "MultiPoint": {
+                MultiPoint mp = (MultiPoint) geom;
+                JSObject coords = createEmptyArray();
+                for (int i = 0; i < mp.getNumGeometries(); i++) {
+                    Point p = (Point) mp.getGeometryN(i);
+                    arrayPush(coords, coordToJSArray(p.getCoordinate()));
+                }
+                return createGeoJSONGeom(JSString.of("MultiPoint"), coords);
+            }
+
+            case "LineString": {
+                LineString ls = (LineString) geom;
+                JSObject coords = coordsToJSArray(ls.getCoordinates());
+                return createGeoJSONGeom(JSString.of("LineString"), coords);
+            }
+
+            case "LinearRing": {
+                LinearRing lr = (LinearRing) geom;
+                JSObject coords = coordsToJSArray(lr.getCoordinates());
+                return createGeoJSONGeom(JSString.of("LineString"), coords); // GeoJSON has no LinearRing
+            }
+
+            case "MultiLineString": {
+                MultiLineString mls = (MultiLineString) geom;
+                JSObject coords = createEmptyArray();
+                for (int i = 0; i < mls.getNumGeometries(); i++) {
+                    LineString ls = (LineString) mls.getGeometryN(i);
+                    arrayPush(coords, coordsToJSArray(ls.getCoordinates()));
+                }
+                return createGeoJSONGeom(JSString.of("MultiLineString"), coords);
+            }
+
+            case "Polygon": {
+                Polygon poly = (Polygon) geom;
+                JSObject rings = createEmptyArray();
+                // Exterior ring
+                arrayPush(rings, coordsToJSArray(poly.getExteriorRing().getCoordinates()));
+                // Interior rings (holes)
+                for (int i = 0; i < poly.getNumInteriorRing(); i++) {
+                    arrayPush(rings, coordsToJSArray(poly.getInteriorRingN(i).getCoordinates()));
+                }
+                return createGeoJSONGeom(JSString.of("Polygon"), rings);
+            }
+
+            case "MultiPolygon": {
+                MultiPolygon mpoly = (MultiPolygon) geom;
+                JSObject polys = createEmptyArray();
+                for (int i = 0; i < mpoly.getNumGeometries(); i++) {
+                    Polygon poly = (Polygon) mpoly.getGeometryN(i);
+                    JSObject rings = createEmptyArray();
+                    arrayPush(rings, coordsToJSArray(poly.getExteriorRing().getCoordinates()));
+                    for (int j = 0; j < poly.getNumInteriorRing(); j++) {
+                        arrayPush(rings, coordsToJSArray(poly.getInteriorRingN(j).getCoordinates()));
+                    }
+                    arrayPush(polys, rings);
+                }
+                return createGeoJSONGeom(JSString.of("MultiPolygon"), polys);
+            }
+
+            case "GeometryCollection": {
+                GeometryCollection gc = (GeometryCollection) geom;
+                JSObject geoms = createEmptyArray();
+                for (int i = 0; i < gc.getNumGeometries(); i++) {
+                    arrayPush(geoms, geometryToGeoJson(gc.getGeometryN(i)));
+                }
+                return createGeoJSONCollection(geoms);
+            }
+
+            default:
+                throw new RuntimeException("Unknown geometry type for GeoJSON: " + type);
+        }
+    }
+
+    private static Object readGeoJSONJS(Object geojsonStr) {
+        try {
+            String jsonStr = ((JSValue) geojsonStr).asString();
+            JSObject geojson = parseJSON(JSString.of(jsonStr));
+            String wkt = geoJsonToWkt(geojson);
+            Geometry geom = wktReader.read(wkt);
+            return createJSGeometry(JSString.of(geom.getGeometryType()), geom);
+        } catch (ParseException e) {
+            throw new RuntimeException("GeoJSON parse error: " + e.getMessage(), e);
+        }
+    }
+
+    private static Object writeGeoJSONJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        JSObject geojson = geometryToGeoJson(g);
+        return stringifyJSON(geojson);
+    }
+
     // Envelope methods
     private static Object createEnvelopeJS(Object minX, Object maxX, Object minY, Object maxY) {
         double minXVal = ((JSValue) minX).asDouble();
@@ -1294,6 +1759,28 @@ public class API {
         Geometry g = extractGeometry(geom);
         Geometry rect = MinimumAreaRectangle.getMinimumRectangle(g);
         return createJSGeometry(JSString.of(rect.getGeometryType()), rect);
+    }
+
+    private static Object minimumBoundingCircleGetCircleJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        MinimumBoundingCircle mbc = new MinimumBoundingCircle(g);
+        Geometry circle = mbc.getCircle();
+        return createJSGeometry(JSString.of(circle.getGeometryType()), circle);
+    }
+
+    private static Object minimumBoundingCircleGetCentreJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        MinimumBoundingCircle mbc = new MinimumBoundingCircle(g);
+        Coordinate centre = mbc.getCentre();
+        JSNumber x = JSNumber.of(centre.getX());
+        JSNumber y = JSNumber.of(centre.getY());
+        return createCoordObject(x, y);
+    }
+
+    private static Object minimumBoundingCircleGetRadiusJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        MinimumBoundingCircle mbc = new MinimumBoundingCircle(g);
+        return JSNumber.of(mbc.getRadius());
     }
 
     // Offset curve
@@ -1454,6 +1941,37 @@ public class API {
         g.setUserData(data);
     }
 
+    // Polygon accessor implementations
+    private static Object getExteriorRingJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        if (!(g instanceof Polygon)) {
+            throw new RuntimeException("getExteriorRing() requires a Polygon geometry, got: " + g.getGeometryType());
+        }
+        Polygon poly = (Polygon) g;
+        LineString ring = poly.getExteriorRing();
+        return createJSGeometry(JSString.of(ring.getGeometryType()), ring);
+    }
+
+    private static Object getInteriorRingNJS(Object geom, Object n) {
+        Geometry g = extractGeometry(geom);
+        if (!(g instanceof Polygon)) {
+            throw new RuntimeException("getInteriorRingN() requires a Polygon geometry, got: " + g.getGeometryType());
+        }
+        Polygon poly = (Polygon) g;
+        int index = ((JSValue) n).asInt();
+        LineString ring = poly.getInteriorRingN(index);
+        return createJSGeometry(JSString.of(ring.getGeometryType()), ring);
+    }
+
+    private static Object getNumInteriorRingJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        if (!(g instanceof Polygon)) {
+            throw new RuntimeException("getNumInteriorRing() requires a Polygon geometry, got: " + g.getGeometryType());
+        }
+        Polygon poly = (Polygon) g;
+        return JSNumber.of(poly.getNumInteriorRing());
+    }
+
     public static void main(String[] args) {
         System.out.println("WasmTS - JTS " + JTSVersion.CURRENT_VERSION + " for WebAssembly");
 
@@ -1465,6 +1983,8 @@ public class API {
 
         // Export geometry creation functions
         exportCreatePoint(API::createPointJS, API::createPoint3DJS, API::createPoint4DJS);
+        exportCreateLineString(API::createLineStringJS);
+        exportCreatePolygon(API::createPolygonJS);
         exportCreateEnvelope(API::createEnvelopeJS);
 
         // Export I/O
@@ -1505,7 +2025,9 @@ public class API {
         exportGetArea(API::getAreaJS);
         exportGetLength(API::getLengthJS);
         exportDistance(API::distanceJS);
+        exportNearestPoints(API::nearestPointsJS);
         exportGetNumPoints(API::getNumPointsJS);
+        exportGetGeometryType(API::getGeometryTypeJS);
         exportIsEmpty(API::isEmptyJS);
         exportIsValid(API::isValidJS);
         exportIsSimple(API::isSimpleJS);
@@ -1518,11 +2040,18 @@ public class API {
         exportGetNumGeometries(API::getNumGeometriesJS);
         exportGetGeometryN(API::getGeometryNJS);
 
+        // Export polygon accessors
+        exportGetExteriorRing(API::getExteriorRingJS);
+        exportGetInteriorRingN(API::getInteriorRingNJS);
+        exportGetNumInteriorRing(API::getNumInteriorRingJS);
+
         // Export WKT I/O
         exportReadWKT(API::readWKTJS);
         exportWriteWKT(API::writeWKTJS);
         exportReadWKB(API::readWKBJS);
         exportWriteWKB(API::writeWKBJS);
+        exportReadGeoJSON(API::readGeoJSONJS);
+        exportWriteGeoJSON(API::writeGeoJSONJS);
 
         // Export Envelope
         exportCreateEnvelope(API::createEnvelopeJS);
@@ -1547,6 +2076,9 @@ public class API {
         // Export geometry analysis algorithms
         exportMinimumDiameter(API::minimumDiameterJS);
         exportMinimumAreaRectangle(API::minimumAreaRectangleJS);
+        exportMinimumBoundingCircleGetCircle(API::minimumBoundingCircleGetCircleJS);
+        exportMinimumBoundingCircleGetCentre(API::minimumBoundingCircleGetCentreJS);
+        exportMinimumBoundingCircleGetRadius(API::minimumBoundingCircleGetRadiusJS);
 
         // Export offset curve
         exportOffsetCurve(API::offsetCurveJS);

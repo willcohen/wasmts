@@ -1,6 +1,6 @@
 {
   "name": "@wcohen/wasmts",
-  "version": "0.1.0-alpha1",
+  "version": "0.1.0-alpha2",
   "description": "A WebAssembly port of [JTS (Java Topology Suite)](https://github.com/locationtech/jts) using **GraalVM Native Image** with web-image backend.",
   "homepage": "https://github.com/willcohen/wasmts#readme",
   "bugs": {

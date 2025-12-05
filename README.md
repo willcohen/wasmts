@@ -36,7 +36,7 @@ Currently available:
 - PreparedGeometry for optimized repeated predicates
 - Geometry analysis algorithms (minimum bounding rectangles and circles)
 - STRtree spatial indexing
-- WKT and WKB I/O with 3D/4D support
+- WKT, WKB, and GeoJSON I/O with 3D/4D support
 - User data attachment (getUserData/setUserData)
 
 **API Design**: The functional API (`wasmts.geom.*`) is the primary implementation. The OO API (`geom.buffer()`) is syntactic sugar that delegates to the functional API.
@@ -335,6 +335,34 @@ console.log(coords[0]); // {x: 5, y: 10, z: 15, m: 20}
 
 WKB is typically 2-3x more compact than WKT and faster to parse.
 
+**GeoJSON** - Standard format for web mapping:
+- `wasmts.io.GeoJSONReader.read(geojsonString)` - Parse GeoJSON string to geometry
+- `wasmts.io.GeoJSONWriter.write(geometry)` - Convert geometry to GeoJSON string
+
+```javascript
+// Read GeoJSON
+const poly = wasmts.io.GeoJSONReader.read('{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}');
+console.log('Area:', poly.getArea()); // 100
+
+// Write GeoJSON
+const point = wasmts.geom.createPoint(5, 10);
+const geojson = wasmts.io.GeoJSONWriter.write(point);
+console.log(geojson); // {"type":"Point","coordinates":[5,10]}
+
+// 3D coordinates preserved
+const point3d = wasmts.io.GeoJSONReader.read('{"type":"Point","coordinates":[5,10,15]}');
+const coords = point3d.getCoordinates();
+console.log(coords[0].z); // 15
+```
+
+Supports all geometry types: Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon, GeometryCollection.
+
+**Note:** The GeoJSON reader/writer is a custom JavaScript implementation using `JSON.parse()`/`JSON.stringify()` rather than JTS's native `GeoJsonReader`/`GeoJsonWriter` classes (which require external JSON libraries not available in the WASM environment). The current implementation provides basic read/write functionality but does not yet expose the full JTS GeoJSON API options:
+- `setForceCCW(boolean)` - RFC 7946 counter-clockwise polygon ring orientation
+- `setEncodeCRS(boolean)` - Include CRS property in output
+- Precision/decimal control in writer
+- Custom `GeometryFactory` in reader for CRS/SRID handling
+
 ### Operations (`wasmts.geom.*`)
 
 **Boolean Operations:**
@@ -379,6 +407,7 @@ All return numbers (except isEmpty/isValid/isSimple/isRectangle which return boo
 - `wasmts.geom.getArea(geometry)` - Calculate area
 - `wasmts.geom.getLength(geometry)` - Calculate length (for linear geometries)
 - `wasmts.geom.distance(geom1, geom2)` - Distance between geometries
+- `wasmts.geom.nearestPoints(geom1, geom2)` - Get closest points on each geometry (returns `[{x,y}, {x,y}]`)
 - `wasmts.geom.getNumPoints(geometry)` - Count points in geometry
 - `wasmts.geom.isEmpty(geometry)` - Check if geometry is empty
 - `wasmts.geom.isValid(geometry)` - Check if geometry is topologically valid
@@ -397,6 +426,38 @@ All return numbers (except isEmpty/isValid/isSimple/isRectangle which return boo
 - `wasmts.geom.setUserData(geometry, data)` - Attach user-defined data to geometry
 
 **Note**: To get a point's coordinates, use `getCoordinates(point)[0].x` and `getCoordinates(point)[0].y`
+
+### Polygon Accessors (`wasmts.geom.*`)
+
+Access exterior ring and interior holes of polygon geometries:
+
+- `wasmts.geom.getExteriorRing(polygon)` - Get outer boundary as LinearRing
+- `wasmts.geom.getNumInteriorRing(polygon)` - Get number of holes (interior rings)
+- `wasmts.geom.getInteriorRingN(polygon, n)` - Get nth interior ring (0-indexed)
+
+```javascript
+// Create a polygon with a hole
+const poly = wasmts.io.WKTReader.read(
+    'POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0), (5 5, 15 5, 15 15, 5 15, 5 5))'
+);
+
+// Access exterior ring
+const exterior = poly.getExteriorRing();
+console.log('Exterior type:', exterior.type); // LinearRing
+console.log('Exterior points:', exterior.getCoordinates().length); // 5
+
+// Access interior rings (holes)
+const numHoles = poly.getNumInteriorRing();
+console.log('Number of holes:', numHoles); // 1
+
+if (numHoles > 0) {
+    const hole = poly.getInteriorRingN(0);
+    const holeCoords = hole.getCoordinates();
+    console.log('Hole start:', holeCoords[0]); // {x: 5, y: 5}
+}
+```
+
+**Note**: These methods only work on Polygon geometries. Calling them on other geometry types will throw an error.
 
 ### Envelopes (Bounding Boxes) (`wasmts.geom.*`)
 
@@ -451,24 +512,33 @@ Use PreparedGeometry when testing many geometries against a single fixed geometr
 
 ### Geometry Analysis Algorithms (`wasmts.algorithm.*`)
 
-**Minimum bounding rectangles** - Find optimal bounding rectangles for geometries:
+**Minimum bounding shapes** - Find optimal bounding rectangles and circles for geometries:
 
 ```javascript
 // Create an irregular polygon
 const polygon = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 2, 12 10, 2 12, 0 0))');
 
-// Find minimum-width bounding rectangle
+// Find minimum-width bounding rectangle (based on minimum diameter)
 const minDiamRect = wasmts.algorithm.MinimumDiameter.getMinimumRectangle(polygon);
 console.log('Minimum-width rectangle area:', minDiamRect.getArea());
 
-// Find minimum-area bounding rectangle
-const minAreaRect = wasmts.algorithm.MinimumBoundingCircle.getMinimumRectangle(polygon);
+// Find minimum-area bounding rectangle (rotating calipers algorithm)
+const minAreaRect = wasmts.algorithm.MinimumAreaRectangle.getMinimumRectangle(polygon);
 console.log('Minimum-area rectangle area:', minAreaRect.getArea());
+
+// Find minimum bounding circle
+const circle = wasmts.algorithm.MinimumBoundingCircle.getCircle(polygon);
+const centre = wasmts.algorithm.MinimumBoundingCircle.getCentre(polygon);
+const radius = wasmts.algorithm.MinimumBoundingCircle.getRadius(polygon);
+console.log('Circle centre:', centre, 'radius:', radius);
 ```
 
 Available algorithms:
-- `wasmts.algorithm.MinimumDiameter.getMinimumRectangle(geometry)` - Returns rectangle with minimum width (based on minimum diameter)
-- `wasmts.algorithm.MinimumBoundingCircle.getMinimumRectangle(geometry)` - Returns rectangle with minimum area enclosing the geometry
+- `wasmts.algorithm.MinimumDiameter.getMinimumRectangle(geometry)` - Rectangle with minimum width
+- `wasmts.algorithm.MinimumAreaRectangle.getMinimumRectangle(geometry)` - Rectangle with minimum area (rotating calipers)
+- `wasmts.algorithm.MinimumBoundingCircle.getCircle(geometry)` - Smallest enclosing circle (as Polygon)
+- `wasmts.algorithm.MinimumBoundingCircle.getCentre(geometry)` - Circle centre as `{x, y}`
+- `wasmts.algorithm.MinimumBoundingCircle.getRadius(geometry)` - Circle radius (number)
 
 ### Advanced Buffering
 

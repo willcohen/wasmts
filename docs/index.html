@@ -114,7 +114,7 @@
             <li>STRtree spatial indexing for efficient queries</li>
             <li>PreparedGeometry for optimized repeated predicates</li>
             <li>Advanced operations: LineMerger, CascadedPolygonUnion, OffsetCurveBuilder</li>
-            <li>WKT and WKB input/output</li>
+            <li>WKT, WKB, and GeoJSON input/output</li>
         </ul>
 
         <h3>Implementation</h3>
@@ -153,6 +153,10 @@
                 <option value="3d">3D Geometries (XYZ)</option>
                 <option value="4d">4D Geometries (XYZM)</option>
                 <option value="io">WKT/WKB I/O</option>
+                <option value="geojson">GeoJSON I/O</option>
+                <option value="polyaccessors">Polygon Accessors (Rings & Holes)</option>
+                <option value="distance">Distance Operations (nearest points)</option>
+                <option value="factory">Geometry Factory (create from coords)</option>
             </select>
         </div>
         <div id="replOutput"></div>
@@ -163,7 +167,7 @@
 
     <!-- Load the WASM module as a regular script -->
     <!-- Using <script src> ensures document.currentScript points to wasmts.js -->
-    <script src="https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha1/dist/wasmts.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha2/dist/wasmts.js"></script>
     <!-- For local development, use: -->
     <!-- <script src="../dist/wasmts.js"></script> -->
 
@@ -363,6 +367,13 @@ console.log('Length:', line.getLength().toFixed(2));
 console.log('Distance:', poly1.distance(small).toFixed(2));
 console.log('Num points:', poly1.getNumPoints());
 
+// Geometry type inspection
+console.log('\\nGeometry types:');
+const testPoint = wasmts.geom.createPoint(5, 10);
+console.log('point type:', testPoint.getGeometryType());
+console.log('line type:', line.getGeometryType());
+console.log('poly1 type:', poly1.getGeometryType());
+
 // === VALIDATION ===
 console.log('\\n=== Validation ===');
 
@@ -496,27 +507,25 @@ console.log('\\nExtracted original geometry, area:', original.getArea());
 
 'PreparedGeometry demo complete'`,
 
-            rectangles: `// Minimum Bounding Rectangles
+            rectangles: `// Minimum Bounding Rectangles & Circles
 // Create an irregular polygon
 const polygon = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 2, 12 10, 2 12, 0 0))');
 console.log('Created irregular polygon');
 console.log('  Area:', polygon.getArea().toFixed(2));
-console.log('  Type:', polygon.type);
 console.log('');
 
 // Find minimum-width bounding rectangle (based on minimum diameter)
 const minDiamRect = wasmts.algorithm.MinimumDiameter.getMinimumRectangle(polygon);
-console.log('Minimum Diameter Rectangle:');
+console.log('MinimumDiameter.getMinimumRectangle (minimum WIDTH):');
 console.log('  Type:', minDiamRect.type);
 if (minDiamRect.type === 'Polygon') {
     console.log('  Area:', minDiamRect.getArea().toFixed(2));
-    console.log('  Contains original:', minDiamRect.contains(polygon));
 }
 console.log('');
 
-// Find minimum-area bounding rectangle
-const minAreaRect = wasmts.algorithm.MinimumBoundingCircle.getMinimumRectangle(polygon);
-console.log('Minimum Area Rectangle:');
+// Find minimum-area bounding rectangle (rotating calipers algorithm)
+const minAreaRect = wasmts.algorithm.MinimumAreaRectangle.getMinimumRectangle(polygon);
+console.log('MinimumAreaRectangle.getMinimumRectangle (minimum AREA):');
 console.log('  Type:', minAreaRect.type);
 if (minAreaRect.type === 'Polygon') {
     console.log('  Area:', minAreaRect.getArea().toFixed(2));
@@ -524,20 +533,31 @@ if (minAreaRect.type === 'Polygon') {
 }
 console.log('');
 
-// Compare the two
-console.log('Comparison:');
-console.log('  Original area:', polygon.getArea().toFixed(2));
+// Compare rectangle algorithms
+console.log('Rectangle Comparison:');
+console.log('  Original polygon area:', polygon.getArea().toFixed(2));
 if (minDiamRect.type === 'Polygon' && minAreaRect.type === 'Polygon') {
-    const diamArea = minDiamRect.getArea();
-    const areaRect = minAreaRect.getArea();
-    console.log('  Min diameter rect area:', diamArea.toFixed(2));
-    console.log('  Min area rect area:', areaRect.toFixed(2));
-    console.log('  Area savings:', ((diamArea - areaRect) / diamArea * 100).toFixed(1) + '%');
+    console.log('  Min-width rect area:', minDiamRect.getArea().toFixed(2));
+    console.log('  Min-area rect area:', minAreaRect.getArea().toFixed(2));
 }
+console.log('');
+
+// MinimumBoundingCircle - smallest enclosing circle
+console.log('MinimumBoundingCircle:');
+const circle = wasmts.algorithm.MinimumBoundingCircle.getCircle(polygon);
+console.log('  Circle type:', circle.type);
+console.log('  Circle area:', circle.getArea().toFixed(2));
+
+const centre = wasmts.algorithm.MinimumBoundingCircle.getCentre(polygon);
+console.log('  Centre:', centre.x.toFixed(2), centre.y.toFixed(2));
+
+const radius = wasmts.algorithm.MinimumBoundingCircle.getRadius(polygon);
+console.log('  Radius:', radius.toFixed(2));
+console.log('  Expected area (pi*r^2):', (Math.PI * radius * radius).toFixed(2));
 
 // Test with a triangle
 const triangle = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 5 10, 0 0))');
-const triRect = wasmts.algorithm.MinimumBoundingCircle.getMinimumRectangle(triangle);
+const triRect = wasmts.algorithm.MinimumAreaRectangle.getMinimumRectangle(triangle);
 console.log('\\nTriangle minimum rectangle area:', triRect.getArea().toFixed(2));
 
 minAreaRect`,
@@ -733,7 +753,318 @@ const line4d = wasmts.io.WKTReader.read('LINESTRING ZM (0 0 0 100, 1 1 10 200)')
 const wkb4d = wasmts.io.WKBWriter.write(line4d);
 console.log('4D WKB size:', wkb4d.length, 'bytes');
 
-poly`
+poly`,
+
+            geojson: `// GeoJSON Input/Output
+// Read and write GeoJSON format - the standard for web mapping
+
+console.log('=== GeoJSON Reader ===');
+
+// Read a Point from GeoJSON
+const pointGeoJSON = '{"type":"Point","coordinates":[5,10]}';
+const point = wasmts.io.GeoJSONReader.read(pointGeoJSON);
+console.log('Point type:', point.type);
+console.log('Coordinates:', point.getCoordinates()[0]);
+
+// Read a Polygon from GeoJSON
+const polyGeoJSON = '{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}';
+const poly = wasmts.io.GeoJSONReader.read(polyGeoJSON);
+console.log('\\nPolygon area:', poly.getArea());
+
+// Read a Polygon with a hole
+const holeGeoJSON = '{"type":"Polygon","coordinates":[[[0,0],[20,0],[20,20],[0,20],[0,0]],[[5,5],[15,5],[15,15],[5,15],[5,5]]]}';
+const polyWithHole = wasmts.io.GeoJSONReader.read(holeGeoJSON);
+console.log('Polygon with hole area:', polyWithHole.getArea(), '(400 - 100 = 300)');
+
+console.log('\\n=== GeoJSON Writer ===');
+
+// Write geometry to GeoJSON
+const circle = wasmts.geom.createPoint(0, 0).buffer(10);
+const circleGeoJSON = wasmts.io.GeoJSONWriter.write(circle);
+const parsed = JSON.parse(circleGeoJSON);
+console.log('Buffer type:', parsed.type);
+console.log('Buffer vertices:', parsed.coordinates[0].length);
+
+// Round-trip test
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10, 20 0)');
+const lineGeoJSON = wasmts.io.GeoJSONWriter.write(line);
+console.log('\\nLineString GeoJSON:', lineGeoJSON);
+
+console.log('\\n=== Format Conversion ===');
+
+// GeoJSON to WKT
+const geoJsonInput = '{"type":"Polygon","coordinates":[[[0,0],[100,0],[100,50],[0,50],[0,0]]]}';
+const fromGeoJson = wasmts.io.GeoJSONReader.read(geoJsonInput);
+const asWkt = wasmts.io.WKTWriter.write(fromGeoJson);
+console.log('GeoJSON -> WKT:', asWkt);
+
+// WKT to GeoJSON
+const wktInput = 'MULTIPOINT ((10 20), (30 40), (50 60))';
+const fromWkt = wasmts.io.WKTReader.read(wktInput);
+const asGeoJson = wasmts.io.GeoJSONWriter.write(fromWkt);
+console.log('WKT -> GeoJSON:', asGeoJson);
+
+console.log('\\n=== 3D GeoJSON ===');
+
+// 3D coordinates are preserved
+const point3d = wasmts.io.GeoJSONReader.read('{"type":"Point","coordinates":[5,10,15]}');
+const coords3d = point3d.getCoordinates()[0];
+console.log('3D Point: x=' + coords3d.x + ', y=' + coords3d.y + ', z=' + coords3d.z);
+
+// Write 3D back to GeoJSON
+const out3d = wasmts.io.GeoJSONWriter.write(point3d);
+console.log('3D GeoJSON:', out3d);
+
+console.log('\\n=== Multi Geometries ===');
+
+// MultiPolygon
+const multiPoly = wasmts.io.GeoJSONReader.read('{"type":"MultiPolygon","coordinates":[[[[0,0],[10,0],[10,10],[0,10],[0,0]]],[[[20,20],[30,20],[30,30],[20,30],[20,20]]]]}');
+console.log('MultiPolygon area:', multiPoly.getArea());
+
+// GeometryCollection
+const gc = wasmts.io.GeoJSONReader.read('{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[0,0]},{"type":"LineString","coordinates":[[0,0],[10,10]]}]}');
+console.log('GeometryCollection type:', gc.type);
+
+poly`,
+
+            polyaccessors: `// Polygon Accessors - Access Exterior Ring and Interior Holes
+// Essential for parcel analysis, area calculations, and geometry manipulation
+
+console.log('=== Simple Polygon (No Holes) ===');
+
+// Create a simple polygon without holes
+const simplePoly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+console.log('Simple polygon area:', simplePoly.getArea());
+
+// Get the exterior ring (outer boundary)
+const exteriorRing = simplePoly.getExteriorRing();
+console.log('Exterior ring type:', exteriorRing.type);
+console.log('Exterior ring coordinates:', exteriorRing.getCoordinates().length, 'points');
+
+// Check for interior rings (holes)
+const numHoles = simplePoly.getNumInteriorRing();
+console.log('Number of holes:', numHoles);
+
+console.log('\\n=== Polygon with One Hole ===');
+
+// Create a polygon with a hole (donut shape)
+const polyWithHole = wasmts.io.WKTReader.read(
+    'POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0), (5 5, 15 5, 15 15, 5 15, 5 5))'
+);
+console.log('Polygon with hole area:', polyWithHole.getArea(), '(400 - 100 = 300)');
+console.log('Number of holes:', polyWithHole.getNumInteriorRing());
+
+// Access the interior ring (hole)
+const hole = polyWithHole.getInteriorRingN(0);
+console.log('Hole ring type:', hole.type);
+console.log('Hole coordinates:', hole.getCoordinates().length, 'points');
+
+// Get hole start coordinates
+const holeCoords = hole.getCoordinates();
+console.log('Hole start point:', holeCoords[0].x, holeCoords[0].y);
+
+console.log('\\n=== Polygon with Multiple Holes ===');
+
+// Create a polygon with multiple holes
+const multiHolePoly = wasmts.io.WKTReader.read(
+    'POLYGON ((0 0, 30 0, 30 30, 0 30, 0 0), ' +
+    '(2 2, 8 2, 8 8, 2 8, 2 2), ' +
+    '(12 12, 18 12, 18 18, 12 18, 12 12), ' +
+    '(22 2, 28 2, 28 8, 22 8, 22 2))'
+);
+console.log('Multi-hole polygon area:', multiHolePoly.getArea());
+console.log('Number of holes:', multiHolePoly.getNumInteriorRing());
+
+// Iterate through all holes
+console.log('\\nHole details:');
+for (let i = 0; i < multiHolePoly.getNumInteriorRing(); i++) {
+    const ring = multiHolePoly.getInteriorRingN(i);
+    const coords = ring.getCoordinates();
+    console.log(\`  Hole \${i}: starts at (\${coords[0].x}, \${coords[0].y})\`);
+}
+
+console.log('\\n=== Practical Use: Calculate Total Hole Area ===');
+
+// Calculate the area of all holes
+let totalHoleArea = 0;
+const outerRing = multiHolePoly.getExteriorRing();
+
+// Create polygon from each hole ring to get its area
+for (let i = 0; i < multiHolePoly.getNumInteriorRing(); i++) {
+    const holeRing = multiHolePoly.getInteriorRingN(i);
+    // Convert ring coordinates to WKT to create a polygon
+    const holeCoords = holeRing.getCoordinates();
+    const wkt = 'POLYGON ((' + holeCoords.map(c => c.x + ' ' + c.y).join(', ') + '))';
+    const holePoly = wasmts.io.WKTReader.read(wkt);
+    totalHoleArea += holePoly.getArea();
+}
+
+console.log('Outer boundary area:', 900, '(30x30)');
+console.log('Total hole area:', totalHoleArea);
+console.log('Net polygon area:', multiHolePoly.getArea());
+
+polyWithHole`,
+
+            distance: `// Distance Operations - Find nearest points between geometries
+// Useful for finding closest features, connection points, etc.
+
+console.log('=== Basic Distance ===');
+
+// Create two separate polygons
+const poly1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const poly2 = wasmts.io.WKTReader.read('POLYGON ((20 0, 30 0, 30 10, 20 10, 20 0))');
+
+// Simple distance calculation
+const dist = poly1.distance(poly2);
+console.log('Distance between polygons:', dist);
+
+console.log('\\n=== Nearest Points ===');
+
+// Get the actual closest points on each geometry
+const nearest = wasmts.geom.nearestPoints(poly1, poly2);
+console.log('Nearest point on poly1:', nearest[0]);
+console.log('Nearest point on poly2:', nearest[1]);
+
+// Verify the distance matches
+const calcDist = Math.sqrt(
+    Math.pow(nearest[1].x - nearest[0].x, 2) +
+    Math.pow(nearest[1].y - nearest[0].y, 2)
+);
+console.log('Calculated distance from points:', calcDist.toFixed(2));
+
+console.log('\\n=== Point to Line ===');
+
+// Find nearest point on a line from a point
+const point = wasmts.geom.createPoint(5, 5);
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 0)');
+
+const nearestPtLine = wasmts.geom.nearestPoints(point, line);
+console.log('Point:', nearestPtLine[0]);
+console.log('Closest point on line:', nearestPtLine[1]);
+console.log('Distance:', point.distance(line).toFixed(2));
+
+console.log('\\n=== Practical Use: Connect Two Features ===');
+
+// Create a line connecting the two nearest points
+const connectorWKT = \`LINESTRING (\${nearest[0].x} \${nearest[0].y}, \${nearest[1].x} \${nearest[1].y})\`;
+const connector = wasmts.io.WKTReader.read(connectorWKT);
+console.log('Connector line:', wasmts.io.WKTWriter.write(connector));
+console.log('Connector length:', connector.getLength().toFixed(2));
+
+nearest`,
+
+            factory: `// Geometry Factory - Create geometries from coordinate arrays
+// Alternative to WKT/WKB when building geometries programmatically
+
+console.log('=== createPoint ===');
+
+// 2D point
+const point2D = wasmts.geom.createPoint(5, 10);
+console.log('2D Point:', point2D.getCoordinates()[0]);
+
+// 3D point (with Z)
+const point3D = wasmts.geom.createPoint(5, 10, 15);
+console.log('3D Point:', point3D.getCoordinates()[0]);
+
+// 4D point (with Z and M)
+const point4D = wasmts.geom.createPoint(5, 10, 15, 20);
+console.log('4D Point:', point4D.getCoordinates()[0]);
+
+console.log('\\n=== createLineString ===');
+
+// Create a LineString from coordinate objects
+const lineCoords = [
+    { x: 0, y: 0 },
+    { x: 10, y: 10 },
+    { x: 20, y: 0 }
+];
+const line = wasmts.geom.createLineString(lineCoords);
+console.log('LineString created, points:', line.getNumPoints());
+console.log('Length:', line.getLength().toFixed(2));
+
+// With 3D coordinates
+const line3D = wasmts.geom.createLineString([
+    { x: 0, y: 0, z: 0 },
+    { x: 10, y: 10, z: 5 },
+    { x: 20, y: 0, z: 10 }
+]);
+const coords3D = line3D.getCoordinates();
+console.log('3D LineString Z values:', coords3D.map(c => c.z).join(', '));
+
+console.log('\\n=== createPolygon (simple) ===');
+
+// Create a simple polygon (no holes)
+const shell = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+    { x: 0, y: 0 }  // Close the ring
+];
+const polygon = wasmts.geom.createPolygon(shell);
+console.log('Polygon created, area:', polygon.getArea());
+console.log('Is valid:', polygon.isValid());
+
+console.log('\\n=== createPolygon (with hole) ===');
+
+// Create a polygon with a hole (donut shape)
+const hole = [
+    { x: 25, y: 25 },
+    { x: 75, y: 25 },
+    { x: 75, y: 75 },
+    { x: 25, y: 75 },
+    { x: 25, y: 25 }  // Close the hole
+];
+const donut = wasmts.geom.createPolygon(shell, [hole]);
+console.log('Donut area:', donut.getArea(), '(10000 - 2500 = 7500)');
+console.log('Number of holes:', donut.getNumInteriorRing());
+
+console.log('\\n=== createPolygon (multiple holes) ===');
+
+// Create a polygon with multiple holes
+const hole1 = [
+    { x: 10, y: 10 },
+    { x: 30, y: 10 },
+    { x: 30, y: 30 },
+    { x: 10, y: 30 },
+    { x: 10, y: 10 }
+];
+const hole2 = [
+    { x: 60, y: 60 },
+    { x: 90, y: 60 },
+    { x: 90, y: 90 },
+    { x: 60, y: 90 },
+    { x: 60, y: 60 }
+];
+const multiHole = wasmts.geom.createPolygon(shell, [hole1, hole2]);
+console.log('Multi-hole polygon area:', multiHole.getArea());
+console.log('Number of holes:', multiHole.getNumInteriorRing());
+
+console.log('\\n=== Practical: Build from nearestPoints ===');
+
+// Use with other API results
+const poly1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const poly2 = wasmts.io.WKTReader.read('POLYGON ((20 0, 30 0, 30 10, 20 10, 20 0))');
+
+// Get nearest points and create a connector line
+const nearest = wasmts.geom.nearestPoints(poly1, poly2);
+const connector = wasmts.geom.createLineString([nearest[0], nearest[1]]);
+console.log('Connector line length:', connector.getLength());
+
+console.log('\\n=== 3D Polygon ===');
+
+// Create 3D polygon (all Z same for a flat plane)
+const shell3D = [
+    { x: 0, y: 0, z: 10 },
+    { x: 10, y: 0, z: 10 },
+    { x: 10, y: 10, z: 10 },
+    { x: 0, y: 10, z: 10 },
+    { x: 0, y: 0, z: 10 }
+];
+const poly3D = wasmts.geom.createPolygon(shell3D);
+console.log('3D polygon Z:', poly3D.getCoordinates()[0].z);
+
+polygon`
         };
 
         // Dropdown handler
