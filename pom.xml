@@ -31,6 +31,8 @@
         <graalvm.version>25.0.0</graalvm.version>
         <exec.mainClass>net.willcohen.wasmts.API</exec.mainClass>
         <wasm.output.name>wasmts</wasm.output.name>
+        <!-- Use local patched GraalVM build from submodule (run scripts/build-graal.sh first) -->
+        <native.image.executable>${project.basedir}/graal-home/bin/native-image</native.image.executable>
     </properties>
 
     <dependencies>
@@ -41,19 +43,42 @@
             <version>${jts.version}</version>
         </dependency>
 
-        <!-- GraalVM WebAssembly Preview API -->
+        <!-- GraalVM WebAssembly Preview API - using local graal submodule sources -->
+        <!-- Commented out: using local sources instead of Maven Central artifact
         <dependency>
             <groupId>org.graalvm.sdk</groupId>
             <artifactId>webimage-preview</artifactId>
             <version>${graalvm.version}</version>
             <scope>provided</scope>
         </dependency>
+        -->
     </dependencies>
 
     <build>
         <sourceDirectory>java/src/main/java</sourceDirectory>
 
         <plugins>
+            <!-- Build Helper Plugin - Add local graal webimage API sources -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.4.0</version>
+                <executions>
+                    <execution>
+                        <id>add-graal-sources</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>add-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>${project.basedir}/graal/sdk/src/org.graalvm.webimage.api/src</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- Maven Compiler Plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -102,11 +127,9 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
-                            <executable>native-image</executable>
+                            <executable>${native.image.executable}</executable>
                             <arguments>
                                 <argument>--tool:svm-wasm</argument>
-                                <argument>--emit</argument>
-                                <argument>build-report</argument>
                                 <argument>-cp</argument>
                                 <argument>${project.build.outputDirectory}${path.separator}${project.build.directory}/lib/*</argument>
                                 <argument>${exec.mainClass}</argument>

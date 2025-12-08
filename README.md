@@ -14,7 +14,7 @@ A WebAssembly port of [JTS (Java Topology Suite)](https://github.com/locationtec
 
 **Current**: JTS 1.20.0 compiled to WebAssembly with JavaScript API
 
-**Note**: This is a proof-of-concept wrapper providing basic JTS functionality. The underlying WASM binary includes the full JTS 1.20.0 library, but most of it isn't exposed to JavaScript yet. Adding new functionality requires creating Java wrapper methods in `API.java`, exporting them to JavaScript using annotations, and handling type conversions. This isn't particularly difficult but it still isn't fully automatic.
+**Note**: This is a proof-of-concept wrapper providing basic JTS functionality. Adding new functionality requires creating Java wrapper methods in `API.java`, exporting them to JavaScript using annotations, and handling type conversions. This isn't particularly difficult but it still isn't fully automatic.
 
 **[Request additional JTS features →](https://github.com/willcohen/wasmts/issues/1)**
 
@@ -38,6 +38,7 @@ Currently available:
 - STRtree spatial indexing
 - WKT, WKB, and GeoJSON I/O with 3D/4D support
 - User data attachment (getUserData/setUserData)
+- CoordinateSequence access via `geometry.apply(filter)` for coordinate transformations
 
 **API Design**: The functional API (`wasmts.geom.*`) is the primary implementation. The OO API (`geom.buffer()`) is syntactic sugar that delegates to the functional API.
 
@@ -45,29 +46,52 @@ Currently available:
 
 ### Prerequisites
 
-- [GraalVM 26 EA](https://www.graalvm.org/downloads/) (26-dev+13.1 or later)
-- Node.js 24+ (for testing, optional)
+- GraalVM with native-image and web-image (see build options below)
+- Maven 3.6+
+- Node.js 24+ (for testing)
 
 ### Build
 
-**Prerequisites:**
-- [GraalVM 26 EA](https://www.graalvm.org/downloads/) with `native-image` installed
-- Maven 3.6+ (or use the provided wrapper)
+**Option 1: Build GraalVM from submodules (recommended)**
 
-**Build command:**
+Due to a race condition bug in GraalVM web-image ([#12676](https://github.com/oracle/graal/issues/12676)), this project includes patched GraalVM as a submodule:
 
 ```bash
-# Clone the repository
-git clone <your-repo-url> wasmts
+# Clone with submodules
+git clone --recurse-submodules <your-repo-url> wasmts
 cd wasmts
 
-# Build WASM with Maven (downloads all dependencies automatically)
+# Or if already cloned:
+git submodule update --init
+
+# Build GraalVM with native-image and web-image (requires SDKMAN + Labs JDK)
+./scripts/build-graal.sh
+
+# Build WASM
+mvn clean package
+```
+
+The build script requires:
+- SDKMAN installed (`curl -s "https://get.sdkman.io" | bash`)
+- Labs JDK installed (`sdk install java labsjdk-ce-latest`)
+
+**Option 2: Use existing GraalVM (when upstream fix is merged)**
+
+```bash
+# Symlink to your GraalVM installation
+ln -s /path/to/graalvm/Contents/Home graal-home
+
+# Verify native-image and svm-wasm tool are available
+./graal-home/bin/native-image --version
+ls ./graal-home/lib/svm/tools/svm-wasm
+
+# Build WASM
 mvn clean package
 ```
 
 **What Maven does:**
 1. Downloads JTS 1.20.0 from Maven Central
-2. Downloads GraalVM webimage-preview API
+2. Compiles against local GraalVM webimage API (from submodule)
 3. Compiles Java source code
 4. Runs `native-image --tool:svm-wasm` to build WebAssembly
 5. Copies output files to project root
@@ -660,6 +684,66 @@ console.log('Union area:', union.getArea());
 
 **API:**
 - `wasmts.operation.union.CascadedPolygonUnion.union(polygonArray)` - Union array of polygons
+
+### CoordinateSequence and CoordinateSequenceFilter
+
+**Transform coordinates** - Access and modify geometry coordinates via the JTS CoordinateSequenceFilter pattern:
+
+```javascript
+// Create a polygon
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+
+// Apply a coordinate transformation (translate by 100, 50)
+const translated = poly.apply((seq, i) => {
+    seq.setOrdinate(i, 0, seq.getX(i) + 100);  // X ordinate (index 0)
+    seq.setOrdinate(i, 1, seq.getY(i) + 50);   // Y ordinate (index 1)
+});
+
+// Original is unchanged (immutable)
+console.log('Original first coord:', poly.getCoordinates()[0]); // {x: 0, y: 0}
+console.log('Translated first coord:', translated.getCoordinates()[0]); // {x: 100, y: 50}
+
+// Scale transformation
+const scaled = poly.apply((seq, i) => {
+    seq.setOrdinate(i, 0, seq.getX(i) * 2);
+    seq.setOrdinate(i, 1, seq.getY(i) * 2);
+});
+console.log('Scaled area:', scaled.getArea()); // 400 (4x original)
+
+// Access CoordinateSequence properties
+poly.apply((seq, i) => {
+    if (i === 0) {
+        console.log('Size:', seq.size());           // 5 (closed polygon)
+        console.log('Dimension:', seq.getDimension()); // 2 or 3
+        console.log('Has Z:', seq.hasZ());          // false for 2D
+        console.log('Has M:', seq.hasM());          // false for 2D
+    }
+});
+
+// 3D coordinate transformation
+const point3d = wasmts.geom.createPoint(5, 10, 15);
+const lifted = point3d.apply((seq, i) => {
+    if (seq.hasZ()) {
+        seq.setOrdinate(i, 2, seq.getZ(i) + 100);  // Z ordinate (index 2)
+    }
+});
+console.log('Lifted Z:', lifted.getCoordinates()[0].z); // 115
+```
+
+**CoordinateSequence methods** (available on `seq` parameter in filter callback):
+- `getX(i)`, `getY(i)`, `getZ(i)`, `getM(i)` - Get ordinate values at index i
+- `getOrdinate(i, ordinateIndex)` - Get ordinate by index (0=X, 1=Y, 2=Z, 3=M)
+- `setOrdinate(i, ordinateIndex, value)` - Set ordinate value
+- `size()` - Number of coordinates in sequence
+- `getDimension()` - Coordinate dimension (2, 3, or 4)
+- `getMeasures()` - Number of measure dimensions (0 or 1)
+- `hasZ()`, `hasM()` - Check for Z/M coordinates
+- `getCoordinate(i)` - Get coordinate as `{x, y, z?, m?}` object
+- `toCoordinateArray()` - Get all coordinates as array
+- `copy()` - Create deep copy of sequence
+
+**Functional API:**
+- `wasmts.geom.apply(geometry, filterFn)` - Apply filter to geometry
 
 ## Build System
 

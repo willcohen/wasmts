@@ -19,6 +19,9 @@ target
 java/target/
 *.jar
 
+# GraalVM build symlink
+graal-home
+
 # npm
 node_modules/
 dist/

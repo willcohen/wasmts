@@ -17,6 +17,7 @@ import org.graalvm.webimage.api.JSBoolean;
 import org.graalvm.webimage.api.JSNumber;
 import org.graalvm.webimage.api.JSObject;
 import org.graalvm.webimage.api.JSString;
+import org.graalvm.webimage.api.JSUndefined;
 import org.graalvm.webimage.api.JSValue;
 
 import org.locationtech.jts.geom.*;
@@ -61,6 +62,8 @@ public class API {
     private static final WKBWriter wkbWriter4D = new WKBWriter(4); // XYZM
 
     // Functional interfaces for JavaScript exports
+    // NOTE: Must use Object parameters, not primitives - the Java proxy method lookup
+    // requires exact signature match, and JS numbers don't auto-match to Java doubles
     @FunctionalInterface
     interface CreatePointFn {
         Object create(Object x, Object y);
@@ -515,6 +518,83 @@ public class API {
         Object getNumInteriorRing(Object geom);
     }
 
+    // CoordinateSequenceFilter - matches JTS Geometry.apply(CoordinateSequenceFilter)
+    @FunctionalInterface
+    interface ApplyFn {
+        Object apply(Object geom, Object filterFn);
+    }
+
+    // CoordinateSequence wrapper functional interfaces
+    @FunctionalInterface
+    interface CoordSeqGetXFn {
+        Object getX(Object seq, Object i);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqGetYFn {
+        Object getY(Object seq, Object i);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqGetZFn {
+        Object getZ(Object seq, Object i);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqGetMFn {
+        Object getM(Object seq, Object i);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqSetOrdinateFn {
+        void setOrdinate(Object seq, Object i, Object ordinateIndex, Object value);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqGetDimensionFn {
+        Object getDimension(Object seq);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqGetMeasuresFn {
+        Object getMeasures(Object seq);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqSizeFn {
+        Object size(Object seq);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqGetCoordinateFn {
+        Object getCoordinate(Object seq, Object i);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqGetOrdinateFn {
+        Object getOrdinate(Object seq, Object i, Object ordinateIndex);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqHasZFn {
+        Object hasZ(Object seq);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqHasMFn {
+        Object hasM(Object seq);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqCopyFn {
+        Object copy(Object seq);
+    }
+
+    @FunctionalInterface
+    interface CoordSeqToCoordinateArrayFn {
+        Object toCoordinateArray(Object seq);
+    }
+
     // Export methods - WasmTS namespace structure
 
     // Initialize namespace structure
@@ -749,6 +829,11 @@ public class API {
     @JS("wasmts.geom.getNumInteriorRing = (geom) => fn.getNumInteriorRing(geom);")
     private static native void exportGetNumInteriorRing(GetNumInteriorRingFn fn);
 
+    // CoordinateSequenceFilter - matches JTS Geometry.apply()
+    @JS.Coerce
+    @JS("wasmts.geom.apply = (geom, filterFn) => fn.apply(geom, filterFn);")
+    private static native void exportApply(ApplyFn fn);
+
     // WKT/WKB I/O (wasmts.io.*)
     @JS.Coerce
     @JS("wasmts.io.WKTReader = wasmts.io.WKTReader || {}; wasmts.io.WKTReader.read = (wkt) => fn.read(wkt);")
@@ -928,6 +1013,7 @@ public class API {
         g.copy = () => wasmts.geom.copy(g);
         g.reverse = () => wasmts.geom.reverse(g);
         g.normalize = () => wasmts.geom.normalize(g);
+        g.apply = (filterFn) => wasmts.geom.apply(g, filterFn);
 
         // Predicates (from JTS Geometry)
         g.contains = (other) => wasmts.geom.contains(g, other);
@@ -981,7 +1067,7 @@ public class API {
             return (Geometry) obj;
         }
         JSObject jsObj = (JSObject) obj;
-        return (Geometry) jsObj.get("_jtsGeom");
+        return jsObj.get("_jtsGeom", Geometry.class);
     }
 
     // Helper to create JavaScript envelope object
@@ -994,7 +1080,7 @@ public class API {
             return (Envelope) obj;
         }
         JSObject jsObj = (JSObject) obj;
-        return (Envelope) jsObj.get("_jtsEnvelope");
+        return jsObj.get("_jtsEnvelope", Envelope.class);
     }
 
     // Helper to create JavaScript STRtree object
@@ -1007,7 +1093,7 @@ public class API {
             return (STRtree) obj;
         }
         JSObject jsObj = (JSObject) obj;
-        return (STRtree) jsObj.get("_jtsSTRtree");
+        return jsObj.get("_jtsSTRtree", STRtree.class);
     }
 
     // Helper to create JavaScript PreparedGeometry object
@@ -1020,7 +1106,7 @@ public class API {
             return (PreparedGeometry) obj;
         }
         JSObject jsObj = (JSObject) obj;
-        return (PreparedGeometry) jsObj.get("_jtsPreparedGeometry");
+        return jsObj.get("_jtsPreparedGeometry", PreparedGeometry.class);
     }
 
     // Helper methods for coordinate extraction removed
@@ -1047,10 +1133,8 @@ public class API {
     private static Object createPointJS(Object x, Object y) {
         double xVal = ((JSValue) x).asDouble();
         double yVal = ((JSValue) y).asDouble();
-
         Coordinate coord = new Coordinate(xVal, yVal);
         Point point = factory.createPoint(coord);
-
         return createJSGeometry(JSString.of("Point"), point);
     }
 
@@ -1058,10 +1142,8 @@ public class API {
         double xVal = ((JSValue) x).asDouble();
         double yVal = ((JSValue) y).asDouble();
         double zVal = ((JSValue) z).asDouble();
-
         Coordinate coord = new Coordinate(xVal, yVal, zVal);
         Point point = factory.createPoint(coord);
-
         return createJSGeometry(JSString.of("Point"), point);
     }
 
@@ -1070,11 +1152,9 @@ public class API {
         double yVal = ((JSValue) y).asDouble();
         double zVal = ((JSValue) z).asDouble();
         double mVal = ((JSValue) m).asDouble();
-
         // Use CoordinateXYZM for 4D coordinates
         Coordinate coord = new CoordinateXYZM(xVal, yVal, zVal, mVal);
         Point point = factory.createPoint(coord);
-
         return createJSGeometry(JSString.of("Point"), point);
     }
 
@@ -1427,11 +1507,13 @@ public class API {
     private static Object readWKBJS(Object wkb) {
         try {
             // Convert JavaScript Uint8Array to Java byte[]
+            // NOTE: JSObject.asByteArray() doesn't work in web-image (returns proxy, not usable array)
+            // So we manually iterate through the TypedArray
             JSObject jsArray = (JSObject) wkb;
             int length = ((JSValue) jsArray.get("length")).asInt();
             byte[] bytes = new byte[length];
             for (int i = 0; i < length; i++) {
-                int val = ((JSValue) jsArray.get(String.valueOf(i))).asInt();
+                int val = ((JSValue) jsArray.get(i)).asInt();
                 bytes[i] = (byte) val;
             }
 
@@ -2107,6 +2189,233 @@ public class API {
         return JSNumber.of(poly.getNumInteriorRing());
     }
 
+    // Helper to create JS CoordinateSequence wrapper - matches JTS CoordinateSequence API
+    @JS("""
+        const s = { _jtsCoordSeq: seq };
+        s.getX = (i) => getXFn(s, i);
+        s.getY = (i) => getYFn(s, i);
+        s.getZ = (i) => getZFn(s, i);
+        s.getM = (i) => getMFn(s, i);
+        s.getOrdinate = (i, ord) => getOrdFn(s, i, ord);
+        s.setOrdinate = (i, ord, val) => setOrdFn(s, i, ord, val);
+        s.getDimension = () => getDimFn(s);
+        s.getMeasures = () => getMeasuresFn(s);
+        s.hasZ = () => hasZFn(s);
+        s.hasM = () => hasMFn(s);
+        s.size = () => sizeFn(s);
+        s.getCoordinate = (i) => getCoordFn(s, i);
+        s.toCoordinateArray = () => toArrayFn(s);
+        s.copy = () => copyFn(s);
+        return s;
+    """)
+    private static native JSObject createJSCoordinateSequenceWithFns(
+        CoordinateSequence seq,
+        CoordSeqGetXFn getXFn,
+        CoordSeqGetYFn getYFn,
+        CoordSeqGetZFn getZFn,
+        CoordSeqGetMFn getMFn,
+        CoordSeqGetOrdinateFn getOrdFn,
+        CoordSeqSetOrdinateFn setOrdFn,
+        CoordSeqGetDimensionFn getDimFn,
+        CoordSeqGetMeasuresFn getMeasuresFn,
+        CoordSeqHasZFn hasZFn,
+        CoordSeqHasMFn hasMFn,
+        CoordSeqSizeFn sizeFn,
+        CoordSeqGetCoordinateFn getCoordFn,
+        CoordSeqToCoordinateArrayFn toArrayFn,
+        CoordSeqCopyFn copyFn
+    );
+
+    // Helper to extract CoordinateSequence from JS wrapper
+    private static CoordinateSequence extractCoordinateSequence(Object obj) {
+        if (obj instanceof CoordinateSequence) {
+            return (CoordinateSequence) obj;
+        }
+        JSObject jsObj = (JSObject) obj;
+        return (CoordinateSequence) jsObj.get("_jtsCoordSeq");
+    }
+
+    // Create JS wrapper for CoordinateSequence
+    private static JSObject createJSCoordinateSequence(CoordinateSequence seq) {
+        return createJSCoordinateSequenceWithFns(
+            seq,
+            API::coordSeqGetXJS,
+            API::coordSeqGetYJS,
+            API::coordSeqGetZJS,
+            API::coordSeqGetMJS,
+            API::coordSeqGetOrdinateJS,
+            API::coordSeqSetOrdinateJS,
+            API::coordSeqGetDimensionJS,
+            API::coordSeqGetMeasuresJS,
+            API::coordSeqHasZJS,
+            API::coordSeqHasMJS,
+            API::coordSeqSizeJS,
+            API::coordSeqGetCoordinateJS,
+            API::coordSeqToCoordinateArrayJS,
+            API::coordSeqCopyJS
+        );
+    }
+
+    // CoordinateSequence implementation methods
+    private static Object coordSeqGetXJS(Object seq, Object i) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        int index = ((JSValue) i).asInt();
+        return JSNumber.of(cs.getX(index));
+    }
+
+    private static Object coordSeqGetYJS(Object seq, Object i) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        int index = ((JSValue) i).asInt();
+        return JSNumber.of(cs.getY(index));
+    }
+
+    private static Object coordSeqGetZJS(Object seq, Object i) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        int index = ((JSValue) i).asInt();
+        return JSNumber.of(cs.getZ(index));
+    }
+
+    private static Object coordSeqGetMJS(Object seq, Object i) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        int index = ((JSValue) i).asInt();
+        return JSNumber.of(cs.getM(index));
+    }
+
+    private static Object coordSeqGetOrdinateJS(Object seq, Object i, Object ordinateIndex) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        int index = ((JSValue) i).asInt();
+        int ord = ((JSValue) ordinateIndex).asInt();
+        return JSNumber.of(cs.getOrdinate(index, ord));
+    }
+
+    private static void coordSeqSetOrdinateJS(Object seq, Object i, Object ordinateIndex, Object value) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        int index = ((JSValue) i).asInt();
+        int ord = ((JSValue) ordinateIndex).asInt();
+        double val = ((JSValue) value).asDouble();
+        cs.setOrdinate(index, ord, val);
+    }
+
+    private static Object coordSeqGetDimensionJS(Object seq) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        return JSNumber.of(cs.getDimension());
+    }
+
+    private static Object coordSeqGetMeasuresJS(Object seq) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        return JSNumber.of(cs.getMeasures());
+    }
+
+    private static Object coordSeqHasZJS(Object seq) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        return JSBoolean.of(cs.hasZ());
+    }
+
+    private static Object coordSeqHasMJS(Object seq) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        return JSBoolean.of(cs.hasM());
+    }
+
+    private static Object coordSeqSizeJS(Object seq) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        return JSNumber.of(cs.size());
+    }
+
+    private static Object coordSeqGetCoordinateJS(Object seq, Object i) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        int index = ((JSValue) i).asInt();
+        Coordinate c = cs.getCoordinate(index);
+        JSNumber xNum = JSNumber.of(c.getX());
+        JSNumber yNum = JSNumber.of(c.getY());
+        boolean hasZ = !Double.isNaN(c.getZ());
+        boolean hasM = !Double.isNaN(c.getM());
+        if (hasZ && hasM) {
+            return createCoordObject4D(xNum, yNum, JSNumber.of(c.getZ()), JSNumber.of(c.getM()));
+        } else if (hasZ) {
+            return createCoordObject3D(xNum, yNum, JSNumber.of(c.getZ()));
+        } else {
+            return createCoordObject(xNum, yNum);
+        }
+    }
+
+    private static Object coordSeqToCoordinateArrayJS(Object seq) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        Coordinate[] coords = cs.toCoordinateArray();
+        JSObject result = createJSArray();
+        for (Coordinate c : coords) {
+            JSNumber xNum = JSNumber.of(c.getX());
+            JSNumber yNum = JSNumber.of(c.getY());
+            boolean hasZ = !Double.isNaN(c.getZ());
+            boolean hasM = !Double.isNaN(c.getM());
+            JSObject coordObj;
+            if (hasZ && hasM) {
+                coordObj = createCoordObject4D(xNum, yNum, JSNumber.of(c.getZ()), JSNumber.of(c.getM()));
+            } else if (hasZ) {
+                coordObj = createCoordObject3D(xNum, yNum, JSNumber.of(c.getZ()));
+            } else {
+                coordObj = createCoordObject(xNum, yNum);
+            }
+            pushToJSArray(result, coordObj);
+        }
+        return result;
+    }
+
+    private static Object coordSeqCopyJS(Object seq) {
+        CoordinateSequence cs = extractCoordinateSequence(seq);
+        CoordinateSequence copy = cs.copy();
+        return createJSCoordinateSequence(copy);
+    }
+
+    // Helper to invoke JS filter callback matching JTS CoordinateSequenceFilter.filter(seq, i)
+    @JS.Coerce
+    @JS("fun(seq, i);")
+    private static native void invokeFilterFn(JSValue fun, JSObject seq, int i);
+
+    private static class JSCallbackCoordinateFilter implements CoordinateSequenceFilter {
+        private final JSValue filterFn;
+        private JSObject currentJSSeq;
+        private CoordinateSequence currentSeq;
+
+        JSCallbackCoordinateFilter(JSValue filterFn) {
+            this.filterFn = filterFn;
+        }
+
+        @Override
+        public void filter(CoordinateSequence seq, int i) {
+            // Create or reuse JS wrapper for this CoordinateSequence
+            // Note: the same seq instance is passed for all coordinates in a ring
+            if (currentSeq != seq) {
+                currentSeq = seq;
+                currentJSSeq = createJSCoordinateSequence(seq);
+            }
+            // Call JS filter matching JTS signature: filter(seq, i)
+            invokeFilterFn(filterFn, currentJSSeq, i);
+        }
+
+        @Override
+        public boolean isDone() {
+            return false;
+        }
+
+        @Override
+        public boolean isGeometryChanged() {
+            return true;
+        }
+    }
+
+    // Apply CoordinateSequenceFilter with JS callback - matches JTS Geometry.apply()
+    private static Object applyJS(Object geom, Object filterFn) {
+        Geometry g = extractGeometry(geom);
+        Geometry copy = g.copy();
+        JSValue jsFn = (JSValue) filterFn;
+
+        JSCallbackCoordinateFilter filter = new JSCallbackCoordinateFilter(jsFn);
+        copy.apply(filter);
+        copy.geometryChanged();
+
+        return createJSGeometry(JSString.of(copy.getGeometryType()), copy);
+    }
+
     public static void main(String[] args) {
         System.out.println("WasmTS - JTS " + JTSVersion.CURRENT_VERSION + " for WebAssembly");
 
@@ -2179,6 +2488,9 @@ public class API {
         exportGetExteriorRing(API::getExteriorRingJS);
         exportGetInteriorRingN(API::getInteriorRingNJS);
         exportGetNumInteriorRing(API::getNumInteriorRingJS);
+
+        // Export CoordinateSequenceFilter - matches JTS Geometry.apply()
+        exportApply(API::applyJS);
 
         // Export WKT I/O
         exportReadWKT(API::readWKTJS);

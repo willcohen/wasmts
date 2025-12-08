@@ -113,6 +113,12 @@ function runAllTests() {
     console.log('\n--- Geometry Factory Methods ---\n');
     testGeometryFactory();
 
+    console.log('\n--- Coordinate Sequence ---\n');
+    testCoordinateSequence();
+
+    console.log('\n--- Coordinate Sequence Filter ---\n');
+    testCoordinateSequenceFilter();
+
     console.log('\n=== All Tests Passed PASS: ===\n');
 }
 
@@ -1176,6 +1182,231 @@ function testGeometryFactory() {
     console.log('PASS: Created polygons are valid');
 
     console.log('PASS: All geometry factory tests completed');
+}
+
+function testCoordinateSequence() {
+    // Test CoordinateSequence wrapper methods via geometry.apply()
+    // The seq parameter in apply callback is a full CoordinateSequence wrapper
+
+    // Test 2D CoordinateSequence
+    const poly2d = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+    let seq2d = null;
+    poly2d.apply((seq, i) => {
+        if (i === 0) seq2d = seq;
+    });
+
+    assert(seq2d !== null, 'CoordinateSequence captured from apply');
+    assert(typeof seq2d.size === 'function', 'seq.size is a function');
+    assert(seq2d.size() === 5, 'size() returns 5 for closed polygon');
+    console.log('PASS: CoordinateSequence.size() = ' + seq2d.size());
+
+    assert(typeof seq2d.getDimension === 'function', 'seq.getDimension is a function');
+    assert(seq2d.getDimension() >= 2, 'getDimension() >= 2 for 2D');
+    console.log('PASS: CoordinateSequence.getDimension() = ' + seq2d.getDimension());
+
+    assert(typeof seq2d.getMeasures === 'function', 'seq.getMeasures is a function');
+    assert(seq2d.getMeasures() === 0, 'getMeasures() = 0 for 2D geometry');
+    console.log('PASS: CoordinateSequence.getMeasures() = ' + seq2d.getMeasures());
+
+    assert(typeof seq2d.hasZ === 'function', 'seq.hasZ is a function');
+    assert(typeof seq2d.hasM === 'function', 'seq.hasM is a function');
+    console.log('PASS: CoordinateSequence.hasZ() = ' + seq2d.hasZ() + ', hasM() = ' + seq2d.hasM());
+
+    // Test getX, getY, getZ, getM
+    assert(seq2d.getX(0) === 0, 'getX(0) = 0');
+    assert(seq2d.getY(0) === 0, 'getY(0) = 0');
+    assert(seq2d.getX(1) === 10, 'getX(1) = 10');
+    assert(seq2d.getY(1) === 0, 'getY(1) = 0');
+    console.log('PASS: CoordinateSequence.getX/getY work correctly');
+
+    // Test getOrdinate
+    assert(seq2d.getOrdinate(0, 0) === 0, 'getOrdinate(0, 0) = X = 0');
+    assert(seq2d.getOrdinate(0, 1) === 0, 'getOrdinate(0, 1) = Y = 0');
+    assert(seq2d.getOrdinate(2, 0) === 10, 'getOrdinate(2, 0) = X = 10');
+    assert(seq2d.getOrdinate(2, 1) === 10, 'getOrdinate(2, 1) = Y = 10');
+    console.log('PASS: CoordinateSequence.getOrdinate works correctly');
+
+    // Test getCoordinate
+    const coord0 = seq2d.getCoordinate(0);
+    assert(coord0.x === 0 && coord0.y === 0, 'getCoordinate(0) returns {x:0, y:0}');
+    const coord2 = seq2d.getCoordinate(2);
+    assert(coord2.x === 10 && coord2.y === 10, 'getCoordinate(2) returns {x:10, y:10}');
+    console.log('PASS: CoordinateSequence.getCoordinate returns coordinate objects');
+
+    // Test toCoordinateArray
+    const allCoords = seq2d.toCoordinateArray();
+    assert(Array.isArray(allCoords), 'toCoordinateArray returns array');
+    assert(allCoords.length === 5, 'toCoordinateArray has 5 elements');
+    assert(allCoords[0].x === 0 && allCoords[0].y === 0, 'First coord correct');
+    assert(allCoords[2].x === 10 && allCoords[2].y === 10, 'Third coord correct');
+    console.log('PASS: CoordinateSequence.toCoordinateArray works');
+
+    // Test copy
+    const seqCopy = seq2d.copy();
+    assert(seqCopy !== null, 'copy() returns a new sequence');
+    assert(seqCopy.size() === seq2d.size(), 'copy has same size');
+    assert(seqCopy.getX(1) === seq2d.getX(1), 'copy has same coordinates');
+    console.log('PASS: CoordinateSequence.copy works');
+
+    // Test 3D CoordinateSequence
+    const point3d = wasmts.geom.createPoint(5, 10, 15);
+    let seq3d = null;
+    point3d.apply((seq, i) => {
+        if (i === 0) seq3d = seq;
+    });
+
+    assert(seq3d.getDimension() >= 3, '3D sequence dimension >= 3');
+    assert(seq3d.hasZ() === true, '3D sequence hasZ() = true');
+    assert(seq3d.getZ(0) === 15, 'getZ(0) = 15');
+    assert(seq3d.getOrdinate(0, 2) === 15, 'getOrdinate(0, 2) = Z = 15');
+    console.log('PASS: 3D CoordinateSequence works, Z = ' + seq3d.getZ(0));
+
+    // Test 4D CoordinateSequence (XYZM)
+    const point4d = wasmts.geom.createPoint(1, 2, 3, 4);
+    let seq4d = null;
+    point4d.apply((seq, i) => {
+        if (i === 0) seq4d = seq;
+    });
+
+    assert(seq4d.getDimension() >= 4, '4D sequence dimension >= 4');
+    assert(seq4d.hasZ() === true, '4D sequence hasZ() = true');
+    assert(seq4d.hasM() === true, '4D sequence hasM() = true');
+    assert(seq4d.getMeasures() === 1, '4D sequence getMeasures() = 1');
+    assert(seq4d.getZ(0) === 3, '4D getZ(0) = 3');
+    assert(seq4d.getM(0) === 4, '4D getM(0) = 4');
+    console.log('PASS: 4D CoordinateSequence works, Z = ' + seq4d.getZ(0) + ', M = ' + seq4d.getM(0));
+
+    // Test coordinate from 4D
+    const coord4d = seq4d.getCoordinate(0);
+    assert(coord4d.x === 1, '4D coord x = 1');
+    assert(coord4d.y === 2, '4D coord y = 2');
+    assert(coord4d.z === 3, '4D coord z = 3');
+    assert(coord4d.m === 4, '4D coord m = 4');
+    console.log('PASS: 4D getCoordinate returns {x, y, z, m}:', coord4d);
+
+    console.log('PASS: All CoordinateSequence tests completed');
+}
+
+function testCoordinateSequenceFilter() {
+    // Test translation using JTS-style API: filter(seq, i) with seq.setOrdinate()
+    // Matches JTS: geometry.apply(CoordinateSequenceFilter)
+    const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+
+    // Apply filter - translate by (10, 5) using JTS CoordinateSequenceFilter pattern
+    const translated = poly.apply((seq, i) => {
+        seq.setOrdinate(i, 0, seq.getX(i) + 10);  // X ordinate
+        seq.setOrdinate(i, 1, seq.getY(i) + 5);   // Y ordinate
+    });
+
+    assert(translated !== null, 'apply returns geometry');
+    assert(translated.type === 'Polygon', 'Result is same geometry type');
+
+    const translatedCoords = translated.getCoordinates();
+    assert(translatedCoords[0].x === 10, 'First coord X shifted by 10');
+    assert(translatedCoords[0].y === 5, 'First coord Y shifted by 5');
+    assert(translatedCoords[1].x === 20, 'Second coord X shifted by 10');
+    assert(translatedCoords[1].y === 5, 'Second coord Y shifted by 5');
+    console.log('PASS: Translation filter works, first coord:', translatedCoords[0]);
+
+    // Verify original is unchanged (immutability)
+    const origCoordsAfter = poly.getCoordinates();
+    assert(origCoordsAfter[0].x === 0, 'Original geometry unchanged');
+    console.log('PASS: Original geometry is unchanged (immutable)');
+
+    // Verify area is preserved
+    assert(translated.getArea() === poly.getArea(), 'Area preserved after translation');
+    console.log('PASS: Area preserved after translation:', translated.getArea());
+
+    // Test scaling - double all coordinates
+    const scaled = poly.apply((seq, i) => {
+        seq.setOrdinate(i, 0, seq.getX(i) * 2);
+        seq.setOrdinate(i, 1, seq.getY(i) * 2);
+    });
+    const scaledCoords = scaled.getCoordinates();
+    assert(scaledCoords[1].x === 20, 'Scaled X doubled');
+    assert(scaledCoords[1].y === 0, 'Scaled Y correct');
+    assert(scaled.getArea() === poly.getArea() * 4, 'Area quadrupled after 2x scale');
+    console.log('PASS: Scale filter works, area:', scaled.getArea());
+
+    // Test on Point
+    const point = wasmts.geom.createPoint(5, 10);
+    const movedPoint = point.apply((seq, i) => {
+        seq.setOrdinate(i, 0, seq.getX(i) + 100);
+        seq.setOrdinate(i, 1, seq.getY(i) + 100);
+    });
+    const movedCoords = movedPoint.getCoordinates();
+    assert(movedCoords[0].x === 105, 'Point X moved');
+    assert(movedCoords[0].y === 110, 'Point Y moved');
+    console.log('PASS: Filter works on Point:', movedCoords[0]);
+
+    // Test on LineString
+    const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10, 20 0)');
+    const rotatedLine = line.apply((seq, i) => {
+        // Simple 90 degree rotation around origin
+        const x = seq.getX(i);
+        const y = seq.getY(i);
+        seq.setOrdinate(i, 0, -y);
+        seq.setOrdinate(i, 1, x);
+    });
+    const rotatedCoords = rotatedLine.getCoordinates();
+    assert(rotatedCoords[1].x === -10, 'Rotated point X correct');
+    assert(rotatedCoords[1].y === 10, 'Rotated point Y correct');
+    console.log('PASS: Filter works on LineString (rotation)');
+
+    // Test 3D coordinate filter
+    const point3d = wasmts.geom.createPoint(5, 10, 15);
+    const lifted = point3d.apply((seq, i) => {
+        if (seq.hasZ()) {
+            seq.setOrdinate(i, 2, seq.getZ(i) + 100);
+        }
+    });
+    const liftedCoords = lifted.getCoordinates();
+    assert(liftedCoords[0].z === 115, '3D Z coordinate modified');
+    console.log('PASS: Filter works on 3D coordinates, z:', liftedCoords[0].z);
+
+    // Test functional API
+    const funcTranslated = wasmts.geom.apply(poly, (seq, i) => {
+        seq.setOrdinate(i, 0, seq.getX(i) + 50);
+        seq.setOrdinate(i, 1, seq.getY(i) + 50);
+    });
+    const funcCoords = funcTranslated.getCoordinates();
+    assert(funcCoords[0].x === 50, 'Functional API works');
+    console.log('PASS: Functional API wasmts.geom.apply works');
+
+    // Test index parameter
+    let indexSum = 0;
+    poly.apply((seq, i) => {
+        indexSum += i;
+    });
+    assert(indexSum === 0 + 1 + 2 + 3 + 4, 'Index parameter works (sum: 0+1+2+3+4=10)');
+    console.log('PASS: Index parameter correctly passed, sum:', indexSum);
+
+    // Test CoordinateSequence helper methods
+    const testPoly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+    let seqSize = 0;
+    let seqDim = 0;
+    testPoly.apply((seq, i) => {
+        if (i === 0) {
+            seqSize = seq.size();
+            seqDim = seq.getDimension();
+        }
+    });
+    assert(seqSize === 5, 'seq.size() returns correct count');
+    assert(seqDim >= 2, 'seq.getDimension() returns >= 2');
+    console.log('PASS: CoordinateSequence helper methods work, size:', seqSize, 'dim:', seqDim);
+
+    // Test getCoordinate
+    let firstCoord = null;
+    testPoly.apply((seq, i) => {
+        if (i === 0) {
+            firstCoord = seq.getCoordinate(0);
+        }
+    });
+    assert(firstCoord !== null, 'getCoordinate returns coordinate');
+    assert(firstCoord.x === 0 && firstCoord.y === 0, 'getCoordinate returns correct values');
+    console.log('PASS: seq.getCoordinate() works:', firstCoord);
+
+    console.log('PASS: All coordinate sequence filter tests completed');
 }
 
 function assert(condition, message) {

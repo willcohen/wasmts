@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 
 - PreparedGeometry: all 11 predicates (`contains`, `containsProperly`, `covers`, `coveredBy`, `crosses`, `disjoint`, `intersects`, `overlaps`, `touches`, `within`, `getGeometry`)
 - MinimumDiameter: `getLength()` returns the minimum width
+- CoordinateSequence wrapper: `getX(i)`, `getY(i)`, `getZ(i)`, `getM(i)`, `getOrdinate(i, ord)`, `setOrdinate(i, ord, value)`, `getDimension()`, `getMeasures()`, `hasZ()`, `hasM()`, `size()`, `getCoordinate(i)`, `toCoordinateArray()`, `copy()`
+- CoordinateSequenceFilter: `geometry.apply(filter)` - filter receives `(seq, i)` matching JTS pattern
+
+### Changed
+
+- Build uses local graal submodule with fix for race condition bug ([#12676](https://github.com/oracle/graal/issues/12676))
 
 ## [0.1.0-alpha2] - 2025-12-05
 
