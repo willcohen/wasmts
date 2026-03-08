@@ -119,6 +119,26 @@ function runAllTests() {
     console.log('\n--- Coordinate Sequence Filter ---\n');
     testCoordinateSequenceFilter();
 
+    console.log('\n--- Geometry Base Class ---\n');
+    testGeometryBaseClassGaps();
+
+    console.log('\n--- IntersectionMatrix ---\n');
+    testIntersectionMatrixGaps();
+
+    testDimension();
+
+    console.log('\n--- Point (getX, getY) ---\n');
+    testPointMethods();
+
+    console.log('\n--- LineString/LinearRing ---\n');
+    testLineStringMethods();
+
+    console.log('\n--- Envelope Methods ---\n');
+    testEnvelopeMethods();
+
+    console.log('\n--- Geometry Additional Methods ---\n');
+    testGeometryAdditionalMethods();
+
     console.log('\n=== All Tests Passed PASS: ===\n');
 }
 
@@ -957,6 +977,78 @@ function testGeoJSONIO() {
     assert(bufferedParsed.coordinates[0].length > 10, 'Buffer has many vertices');
     console.log('PASS: Buffer to GeoJSON, vertices:', bufferedParsed.coordinates[0].length);
 
+    // Test GeoJSONWriter instance API (1:1 coverage)
+    console.log('\n--- GeoJSON Instance API Tests ---\n');
+
+    // Test GeoJSONWriter.create()
+    const writer = wasmts.io.GeoJSONWriter.create();
+    assert(writer !== null && writer !== undefined, 'GeoJSONWriter.create() works');
+    assert(typeof writer.write === 'function', 'Writer has write method');
+    assert(typeof writer.setEncodeCRS === 'function', 'Writer has setEncodeCRS method');
+    assert(typeof writer.setForceCCW === 'function', 'Writer has setForceCCW method');
+    console.log('PASS: GeoJSONWriter.create() returns writer with instance methods');
+
+    // Test writer.write()
+    const testPoint = wasmts.geom.createPoint(1, 2);
+    const writerOutput = writer.write(testPoint);
+    assert(typeof writerOutput === 'string', 'writer.write() returns string');
+    const writerParsed = JSON.parse(writerOutput);
+    assert(writerParsed.type === 'Point', 'writer.write() outputs correct type');
+    console.log('PASS: writer.write() works');
+
+    // Test setEncodeCRS(false) - disable CRS output
+    writer.setEncodeCRS(false);
+    const noCrsOutput = writer.write(testPoint);
+    const noCrsParsed = JSON.parse(noCrsOutput);
+    assert(noCrsParsed.crs === undefined, 'setEncodeCRS(false) removes CRS from output');
+    console.log('PASS: writer.setEncodeCRS(false) works');
+
+    // Test setEncodeCRS(true) - enable CRS output
+    writer.setEncodeCRS(true);
+    const withCrsOutput = writer.write(testPoint);
+    const withCrsParsed = JSON.parse(withCrsOutput);
+    assert(withCrsParsed.crs !== undefined, 'setEncodeCRS(true) includes CRS in output');
+    console.log('PASS: writer.setEncodeCRS(true) works');
+
+    // Test GeoJSONWriter.createWithDecimals()
+    const writerDecimals = wasmts.io.GeoJSONWriter.createWithDecimals(2);
+    assert(writerDecimals !== null, 'GeoJSONWriter.createWithDecimals() works');
+    const precisePoint = wasmts.geom.createPoint(1.123456789, 2.987654321);
+    writerDecimals.setEncodeCRS(false);
+    const decimalsOutput = writerDecimals.write(precisePoint);
+    const decimalsParsed = JSON.parse(decimalsOutput);
+    // With 2 decimals, coordinates should be rounded
+    assert(decimalsParsed.coordinates[0] === 1.12 || decimalsParsed.coordinates[0] === 1.1,
+           'Decimals parameter limits precision');
+    console.log('PASS: GeoJSONWriter.createWithDecimals() limits precision');
+
+    // Test setForceCCW()
+    const ccwWriter = wasmts.io.GeoJSONWriter.create();
+    ccwWriter.setEncodeCRS(false);
+    ccwWriter.setForceCCW(true);
+    // Create a clockwise polygon
+    const cwPoly = wasmts.io.WKTReader.read('POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))');
+    const ccwOutput = ccwWriter.write(cwPoly);
+    const ccwParsed = JSON.parse(ccwOutput);
+    assert(ccwParsed.type === 'Polygon', 'setForceCCW outputs polygon');
+    console.log('PASS: writer.setForceCCW() works');
+
+    // Test GeoJSONReader.create()
+    const reader = wasmts.io.GeoJSONReader.create();
+    assert(reader !== null && reader !== undefined, 'GeoJSONReader.create() works');
+    assert(typeof reader.read === 'function', 'Reader has read method');
+    console.log('PASS: GeoJSONReader.create() returns reader with instance methods');
+
+    // Test reader.read()
+    const readerInput = '{"type":"Point","coordinates":[3,4]}';
+    const readerGeom = reader.read(readerInput);
+    assert(readerGeom.type === 'Point', 'reader.read() parses geometry');
+    const readerCoords = readerGeom.getCoordinates();
+    assert(readerCoords[0].x === 3, 'reader.read() coordinates correct');
+    console.log('PASS: reader.read() works');
+
+    console.log('PASS: All GeoJSON instance API tests completed');
+
     console.log('PASS: All GeoJSON I/O tests completed');
 }
 
@@ -1180,6 +1272,88 @@ function testGeometryFactory() {
     assert(polygon.isValid() === true, 'Created polygon is valid');
     assert(polygonWithHole.isValid() === true, 'Created polygon with hole is valid');
     console.log('PASS: Created polygons are valid');
+
+    console.log('Testing createLinearRing(coords)...');
+    const ringCoords = [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+        { x: 0, y: 0 }
+    ];
+    const ring = wasmts.geom.createLinearRing(ringCoords);
+    assert(ring !== null, 'createLinearRing returns geometry');
+    assert(ring.type === 'LinearRing', 'createLinearRing creates LinearRing');
+    assert(ring.isClosed() === true, 'LinearRing is closed');
+    assert(ring.getNumPoints() === 5, 'LinearRing has 5 points');
+    console.log('PASS: createLinearRing(coords)');
+
+    console.log('Testing createMultiPoint(points)...');
+    const p1 = wasmts.geom.createPoint(0, 0);
+    const p2 = wasmts.geom.createPoint(10, 10);
+    const p3 = wasmts.geom.createPoint(20, 0);
+    const multiPoint = wasmts.geom.createMultiPoint([p1, p2, p3]);
+    assert(multiPoint !== null, 'createMultiPoint returns geometry');
+    assert(multiPoint.type === 'MultiPoint', 'createMultiPoint creates MultiPoint');
+    assert(multiPoint.getNumGeometries() === 3, 'MultiPoint has 3 points');
+    const mp0 = multiPoint.getGeometryN(0);
+    assert(mp0.getX() === 0 && mp0.getY() === 0, 'First point is (0,0)');
+    console.log('PASS: createMultiPoint(points)');
+
+    console.log('Testing createMultiLineString(lines)...');
+    const ls1 = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)');
+    const ls2 = wasmts.io.WKTReader.read('LINESTRING (20 20, 30 30)');
+    const multiLine = wasmts.geom.createMultiLineString([ls1, ls2]);
+    assert(multiLine !== null, 'createMultiLineString returns geometry');
+    assert(multiLine.type === 'MultiLineString', 'createMultiLineString creates MultiLineString');
+    assert(multiLine.getNumGeometries() === 2, 'MultiLineString has 2 linestrings');
+    console.log('PASS: createMultiLineString(lines)');
+
+    console.log('Testing createMultiPolygon(polygons)...');
+    const poly1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+    const poly2 = wasmts.io.WKTReader.read('POLYGON ((20 20, 30 20, 30 30, 20 30, 20 20))');
+    const multiPoly = wasmts.geom.createMultiPolygon([poly1, poly2]);
+    assert(multiPoly !== null, 'createMultiPolygon returns geometry');
+    assert(multiPoly.type === 'MultiPolygon', 'createMultiPolygon creates MultiPolygon');
+    assert(multiPoly.getNumGeometries() === 2, 'MultiPolygon has 2 polygons');
+    assert(multiPoly.getArea() === 200, 'MultiPolygon area is sum of both (100 + 100)');
+    console.log('PASS: createMultiPolygon(polygons)');
+
+    console.log('Testing createGeometryCollection(geoms)...');
+    const gcPoint = wasmts.geom.createPoint(5, 5);
+    const gcLine = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)');
+    const gcPoly = wasmts.io.WKTReader.read('POLYGON ((20 20, 30 20, 30 30, 20 30, 20 20))');
+    const geomCollection = wasmts.geom.createGeometryCollection([gcPoint, gcLine, gcPoly]);
+    assert(geomCollection !== null, 'createGeometryCollection returns geometry');
+    assert(geomCollection.type === 'GeometryCollection', 'createGeometryCollection creates GeometryCollection');
+    assert(geomCollection.getNumGeometries() === 3, 'GeometryCollection has 3 geometries');
+    assert(geomCollection.getGeometryN(0).type === 'Point', 'First geometry is Point');
+    assert(geomCollection.getGeometryN(1).type === 'LineString', 'Second geometry is LineString');
+    assert(geomCollection.getGeometryN(2).type === 'Polygon', 'Third geometry is Polygon');
+    console.log('PASS: createGeometryCollection(geoms)');
+
+    console.log('Testing createEmpty(dimension)...');
+    const emptyPoint = wasmts.geom.createEmpty(0);
+    assert(emptyPoint !== null, 'createEmpty(0) returns geometry');
+    assert(emptyPoint.type === 'Point', 'createEmpty(0) creates Point');
+    assert(emptyPoint.isEmpty() === true, 'createEmpty(0) creates empty Point');
+    const emptyLine = wasmts.geom.createEmpty(1);
+    assert(emptyLine.type === 'LineString', 'createEmpty(1) creates LineString');
+    assert(emptyLine.isEmpty() === true, 'createEmpty(1) creates empty LineString');
+    const emptyPoly = wasmts.geom.createEmpty(2);
+    assert(emptyPoly.type === 'Polygon', 'createEmpty(2) creates Polygon');
+    assert(emptyPoly.isEmpty() === true, 'createEmpty(2) creates empty Polygon');
+    console.log('PASS: createEmpty(dimension)');
+
+    console.log('Testing toGeometry(envelope)...');
+    const env = wasmts.geom.createEnvelope(0, 10, 0, 20);
+    const envGeom = wasmts.geom.toGeometry(env);
+    assert(envGeom !== null, 'toGeometry returns geometry');
+    assert(envGeom.type === 'Polygon', 'toGeometry creates Polygon from envelope');
+    assert(envGeom.getArea() === 200, 'toGeometry Polygon has correct area (10 * 20 = 200)');
+    const envCoords = envGeom.getCoordinates();
+    assert(envCoords.length === 5, 'Envelope polygon has 5 coordinates (closed)');
+    console.log('PASS: toGeometry(envelope)');
 
     console.log('PASS: All geometry factory tests completed');
 }
@@ -1407,6 +1581,554 @@ function testCoordinateSequenceFilter() {
     console.log('PASS: seq.getCoordinate() works:', firstCoord);
 
     console.log('PASS: All coordinate sequence filter tests completed');
+}
+
+function testGeometryBaseClassGaps() {
+    console.log('Testing getDimension()...');
+    const point = wasmts.geom.createPoint(0, 0);
+    const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)');
+    const polygon = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+
+    assert(point.getDimension() === 0, 'Point.getDimension() returns 0');
+    assert(line.getDimension() === 1, 'LineString.getDimension() returns 1');
+    assert(polygon.getDimension() === 2, 'Polygon.getDimension() returns 2');
+    console.log('PASS: getDimension()');
+
+    console.log('Testing getBoundaryDimension()...');
+    assert(point.getBoundaryDimension() === -1, 'Point.getBoundaryDimension() returns -1');
+    assert(line.getBoundaryDimension() === 0, 'LineString.getBoundaryDimension() returns 0');
+    assert(polygon.getBoundaryDimension() === 1, 'Polygon.getBoundaryDimension() returns 1');
+    console.log('PASS: getBoundaryDimension()');
+
+    console.log('Testing relate(g, pattern)...');
+    const interiorPoint = wasmts.geom.createPoint(5, 5);
+    // T*****FF* is the DE-9IM pattern for "contains"
+    assert(polygon.relate(interiorPoint, 'T*****FF*') === true, 'Polygon.relate(interiorPoint, pattern) returns true');
+    console.log('PASS: relate(g, pattern)');
+
+    console.log('Testing relate(g) returns IntersectionMatrix...');
+    const matrix = polygon.relate(interiorPoint);
+    assert(matrix !== null && matrix !== undefined, 'relate(g) returns matrix');
+    assert(typeof matrix.toString === 'function', 'IntersectionMatrix has toString()');
+    const matrixStr = matrix.toString();
+    assert(matrixStr.length === 9, 'IntersectionMatrix.toString() returns 9-char string');
+    console.log('PASS: relate(g) returns IntersectionMatrix:', matrixStr);
+
+    console.log('Testing equalsExact(g, tolerance)...');
+    const p1 = wasmts.geom.createPoint(0, 0);
+    const p2 = wasmts.geom.createPoint(0.0001, 0);
+    assert(p1.equalsExact(p2, 0.001) === true, 'Points within tolerance are equalsExact');
+    assert(p1.equalsExact(p2, 0.00001) === false, 'Points outside tolerance are not equalsExact');
+    console.log('PASS: equalsExact(g, tolerance)');
+
+    console.log('Testing equalsNorm(g)...');
+    const line1 = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)');
+    const line2 = wasmts.io.WKTReader.read('LINESTRING (10 10, 0 0)');
+    assert(line1.equalsNorm(line2) === true, 'Reversed LineString equalsNorm original');
+    console.log('PASS: equalsNorm(g)');
+
+    console.log('Testing isWithinDistance(g, distance)...');
+    const pA = wasmts.geom.createPoint(0, 0);
+    const pB = wasmts.geom.createPoint(5, 0);
+    assert(pA.isWithinDistance(pB, 6) === true, 'Points 5 apart are within distance 6');
+    assert(pA.isWithinDistance(pB, 4) === false, 'Points 5 apart are not within distance 4');
+    console.log('PASS: isWithinDistance(g, distance)');
+
+    console.log('Testing getSRID() / setSRID()...');
+    const geom = wasmts.geom.createPoint(0, 0);
+    assert(geom.getSRID() === 0, 'Default SRID is 0');
+    geom.setSRID(4326);
+    assert(geom.getSRID() === 4326, 'SRID set to 4326');
+    console.log('PASS: getSRID() / setSRID()');
+
+    console.log('Testing union() no-arg...');
+    const multi = wasmts.io.WKTReader.read('MULTIPOLYGON (((0 0, 10 0, 10 10, 0 10, 0 0)), ((5 5, 15 5, 15 15, 5 15, 5 5)))');
+    const unioned = multi.union();
+    assert(unioned.type === 'Polygon' || unioned.type === 'MultiPolygon', 'union() returns polygon geometry');
+    console.log('PASS: union() no-arg');
+
+    console.log('PASS: All Geometry base class gap tests completed');
+}
+
+function testIntersectionMatrixGaps() {
+    console.log('Testing IntersectionMatrix constructor and basic methods...');
+
+    // Get a matrix from relate() first
+    const polygon = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+    const point = wasmts.geom.createPoint(5, 5);
+    const matrix = polygon.relate(point);
+
+    console.log('Testing IntersectionMatrix.toString()...');
+    const str = matrix.toString();
+    assert(str.length === 9, 'toString() returns 9-char string');
+    console.log('PASS: toString() =', str);
+
+    console.log('Testing IntersectionMatrix.get(row, col)...');
+    const val = matrix.get(0, 0);
+    assert(typeof val === 'number', 'get() returns number');
+    console.log('PASS: get(0,0) =', val);
+
+    console.log('Testing IntersectionMatrix.matches(pattern)...');
+    assert(typeof matrix.matches === 'function', 'matches() method exists');
+    // Interior-Interior should match 'T********' or '0********'
+    const matchesPattern = matrix.matches('T********');
+    assert(typeof matchesPattern === 'boolean', 'matches() returns boolean');
+    console.log('PASS: matches(pattern) =', matchesPattern);
+
+    console.log('Testing IntersectionMatrix predicates...');
+    assert(typeof matrix.isContains === 'function', 'isContains() exists');
+    assert(typeof matrix.isWithin === 'function', 'isWithin() exists');
+    assert(typeof matrix.isIntersects === 'function', 'isIntersects() exists');
+    assert(typeof matrix.isDisjoint === 'function', 'isDisjoint() exists');
+    assert(typeof matrix.isCovers === 'function', 'isCovers() exists');
+    assert(typeof matrix.isCoveredBy === 'function', 'isCoveredBy() exists');
+    console.log('PASS: Predicate methods exist');
+
+    console.log('Testing IntersectionMatrix.isContains()...');
+    assert(matrix.isContains() === true, 'Polygon contains point');
+    console.log('PASS: isContains() =', matrix.isContains());
+
+    console.log('Testing IntersectionMatrix.isIntersects()...');
+    assert(matrix.isIntersects() === true, 'Polygon intersects point');
+    console.log('PASS: isIntersects() =', matrix.isIntersects());
+
+    console.log('Testing IntersectionMatrix.isDisjoint()...');
+    assert(matrix.isDisjoint() === false, 'Polygon not disjoint from interior point');
+    console.log('PASS: isDisjoint() =', matrix.isDisjoint());
+
+    console.log('Testing IntersectionMatrix.transpose()...');
+    const transposed = matrix.transpose();
+    assert(transposed !== null, 'transpose() returns matrix');
+    assert(transposed.toString().length === 9, 'Transposed matrix has 9-char string');
+    console.log('PASS: transpose() =', transposed.toString());
+
+    console.log('Testing IntersectionMatrix.set(row, col, value)...');
+    matrix.set(0, 0, 2);
+    assert(matrix.get(0, 0) === 2, 'set() updates value');
+    console.log('PASS: set(0, 0, 2) works');
+
+    console.log('Testing IntersectionMatrix.setAll(value)...');
+    matrix.setAll(-1);
+    assert(matrix.get(0, 0) === -1, 'setAll() sets all to value');
+    assert(matrix.get(2, 2) === -1, 'setAll() sets all positions');
+    console.log('PASS: setAll(-1) works');
+
+    console.log('Testing static IntersectionMatrix.isTrue(dimValue)...');
+    assert(wasmts.geom.IntersectionMatrix.isTrue(0) === true, 'isTrue(0) is true');
+    assert(wasmts.geom.IntersectionMatrix.isTrue(1) === true, 'isTrue(1) is true');
+    assert(wasmts.geom.IntersectionMatrix.isTrue(2) === true, 'isTrue(2) is true');
+    assert(wasmts.geom.IntersectionMatrix.isTrue(-1) === false, 'isTrue(-1) is false');
+    console.log('PASS: static isTrue()');
+
+    console.log('Testing static IntersectionMatrix.matches(dimValue, symbol)...');
+    assert(wasmts.geom.IntersectionMatrix.matches(1, 'T') === true, 'matches(1, T) is true');
+    assert(wasmts.geom.IntersectionMatrix.matches(-1, 'F') === true, 'matches(-1, F) is true');
+    assert(wasmts.geom.IntersectionMatrix.matches(0, '*') === true, 'matches(0, *) is true');
+    console.log('PASS: static matches(dimValue, symbol)');
+
+    console.log('Testing IntersectionMatrix constructors...');
+    const defaultMatrix = new wasmts.geom.IntersectionMatrix();
+    assert(defaultMatrix.toString() === 'FFFFFFFFF', 'Default constructor creates all F matrix');
+    console.log('PASS: Default constructor');
+
+    const fromString = new wasmts.geom.IntersectionMatrix('T*F**FFF*');
+    assert(fromString.toString() === 'T*F**FFF*', 'String constructor preserves pattern');
+    console.log('PASS: String constructor');
+
+    console.log('Testing IntersectionMatrix.isTouches(dimA, dimB)...');
+    const touchMatrix = polygon.relate(wasmts.io.WKTReader.read('POINT (0 0)'));
+    assert(typeof touchMatrix.isTouches === 'function', 'isTouches() exists');
+    console.log('PASS: isTouches() method exists');
+
+    console.log('Testing IntersectionMatrix.isCrosses(dimA, dimB)...');
+    assert(typeof matrix.isCrosses === 'function', 'isCrosses() exists');
+    console.log('PASS: isCrosses() method exists');
+
+    console.log('Testing IntersectionMatrix.isEquals(dimA, dimB)...');
+    assert(typeof matrix.isEquals === 'function', 'isEquals() exists');
+    console.log('PASS: isEquals() method exists');
+
+    console.log('Testing IntersectionMatrix.isOverlaps(dimA, dimB)...');
+    assert(typeof matrix.isOverlaps === 'function', 'isOverlaps() exists');
+    console.log('PASS: isOverlaps() method exists');
+
+    console.log('Testing IntersectionMatrix.isWithin()...');
+    // Point is within polygon - get matrix from point's perspective
+    const withinMatrix = point.relate(polygon);
+    assert(typeof withinMatrix.isWithin === 'function', 'isWithin() exists');
+    console.log('PASS: isWithin() method exists');
+
+    console.log('Testing IntersectionMatrix.setAtLeast(row, col, min)...');
+    const testMatrix = new wasmts.geom.IntersectionMatrix();
+    testMatrix.setAtLeast(0, 0, 1);
+    assert(testMatrix.get(0, 0) === 1, 'setAtLeast updates when current < min');
+    testMatrix.setAtLeast(0, 0, 0);
+    assert(testMatrix.get(0, 0) === 1, 'setAtLeast does not reduce');
+    console.log('PASS: setAtLeast()');
+
+    console.log('Testing IntersectionMatrix.add(other)...');
+    const m1 = new wasmts.geom.IntersectionMatrix('012012012');
+    const m2 = new wasmts.geom.IntersectionMatrix('210210210');
+    m1.add(m2);
+    assert(m1.get(0, 0) === 2, 'add() takes maximum');
+    console.log('PASS: add()');
+
+    console.log('PASS: All IntersectionMatrix gap tests completed');
+}
+
+async function testDimension() {
+    console.log('');
+    console.log('--- Section: Dimension Class ---');
+    console.log('');
+
+    console.log('Testing Dimension constants...');
+    assert(wasmts.geom.Dimension.P === 0, 'Dimension.P = 0');
+    assert(wasmts.geom.Dimension.L === 1, 'Dimension.L = 1');
+    assert(wasmts.geom.Dimension.A === 2, 'Dimension.A = 2');
+    assert(wasmts.geom.Dimension.FALSE === -1, 'Dimension.FALSE = -1');
+    assert(wasmts.geom.Dimension.TRUE === -2, 'Dimension.TRUE = -2');
+    assert(wasmts.geom.Dimension.DONTCARE === -3, 'Dimension.DONTCARE = -3');
+    console.log('PASS: Dimension value constants');
+
+    assert(wasmts.geom.Dimension.SYM_FALSE === 'F', 'Dimension.SYM_FALSE = F');
+    assert(wasmts.geom.Dimension.SYM_TRUE === 'T', 'Dimension.SYM_TRUE = T');
+    assert(wasmts.geom.Dimension.SYM_DONTCARE === '*', 'Dimension.SYM_DONTCARE = *');
+    assert(wasmts.geom.Dimension.SYM_P === '0', 'Dimension.SYM_P = 0');
+    assert(wasmts.geom.Dimension.SYM_L === '1', 'Dimension.SYM_L = 1');
+    assert(wasmts.geom.Dimension.SYM_A === '2', 'Dimension.SYM_A = 2');
+    console.log('PASS: Dimension symbol constants');
+
+    console.log('Testing Dimension.toDimensionSymbol()...');
+    assert(wasmts.geom.Dimension.toDimensionSymbol(0) === '0', 'toDimensionSymbol(0) = "0"');
+    assert(wasmts.geom.Dimension.toDimensionSymbol(1) === '1', 'toDimensionSymbol(1) = "1"');
+    assert(wasmts.geom.Dimension.toDimensionSymbol(2) === '2', 'toDimensionSymbol(2) = "2"');
+    assert(wasmts.geom.Dimension.toDimensionSymbol(-1) === 'F', 'toDimensionSymbol(-1) = "F"');
+    assert(wasmts.geom.Dimension.toDimensionSymbol(-2) === 'T', 'toDimensionSymbol(-2) = "T"');
+    assert(wasmts.geom.Dimension.toDimensionSymbol(-3) === '*', 'toDimensionSymbol(-3) = "*"');
+    console.log('PASS: Dimension.toDimensionSymbol()');
+
+    console.log('Testing Dimension.toDimensionValue()...');
+    assert(wasmts.geom.Dimension.toDimensionValue('0') === 0, 'toDimensionValue("0") = 0');
+    assert(wasmts.geom.Dimension.toDimensionValue('1') === 1, 'toDimensionValue("1") = 1');
+    assert(wasmts.geom.Dimension.toDimensionValue('2') === 2, 'toDimensionValue("2") = 2');
+    assert(wasmts.geom.Dimension.toDimensionValue('F') === -1, 'toDimensionValue("F") = -1');
+    assert(wasmts.geom.Dimension.toDimensionValue('T') === -2, 'toDimensionValue("T") = -2');
+    assert(wasmts.geom.Dimension.toDimensionValue('*') === -3, 'toDimensionValue("*") = -3');
+    console.log('PASS: Dimension.toDimensionValue()');
+
+    console.log('PASS: All Dimension tests completed');
+}
+
+function testPointMethods() {
+    const point = wasmts.geom.createPoint(3, 4);
+
+    console.log('Testing Point.getX()...');
+    assert(point.getX() === 3, 'Point(3, 4).getX() returns 3');
+    console.log('PASS: Point.getX()');
+
+    console.log('Testing Point.getY()...');
+    assert(point.getY() === 4, 'Point(3, 4).getY() returns 4');
+    console.log('PASS: Point.getY()');
+
+    // Test with 3D point
+    const point3d = wasmts.geom.createPoint(1, 2, 3);
+    assert(point3d.getX() === 1, '3D Point getX works');
+    assert(point3d.getY() === 2, '3D Point getY works');
+    console.log('PASS: 3D Point getX/getY');
+
+    console.log('PASS: All Point method tests completed');
+}
+
+function testLineStringMethods() {
+    const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 5 5, 10 0)');
+    const ring = wasmts.io.WKTReader.read('LINEARRING (0 0, 10 0, 10 10, 0 10, 0 0)');
+
+    console.log('Testing LineString.getPointN(n)...');
+    const middlePoint = line.getPointN(1);
+    assert(middlePoint !== null && middlePoint !== undefined, 'getPointN(1) returns a point');
+    assert(middlePoint.type === 'Point', 'getPointN(1) returns Point type');
+    assert(middlePoint.getX() === 5, 'getPointN(1) returns point at x=5');
+    assert(middlePoint.getY() === 5, 'getPointN(1) returns point at y=5');
+    const firstPoint = line.getPointN(0);
+    assert(firstPoint.getX() === 0 && firstPoint.getY() === 0, 'getPointN(0) returns first point');
+    const lastPoint = line.getPointN(2);
+    assert(lastPoint.getX() === 10 && lastPoint.getY() === 0, 'getPointN(2) returns last point');
+    console.log('PASS: LineString.getPointN(n)');
+
+    console.log('Testing LineString.getStartPoint()...');
+    const startPoint = line.getStartPoint();
+    assert(startPoint !== null && startPoint !== undefined, 'getStartPoint() returns a point');
+    assert(startPoint.type === 'Point', 'getStartPoint() returns Point type');
+    assert(startPoint.getX() === 0, 'getStartPoint() returns point at x=0');
+    assert(startPoint.getY() === 0, 'getStartPoint() returns point at y=0');
+    console.log('PASS: LineString.getStartPoint()');
+
+    console.log('Testing LineString.getEndPoint()...');
+    const endPoint = line.getEndPoint();
+    assert(endPoint !== null && endPoint !== undefined, 'getEndPoint() returns a point');
+    assert(endPoint.type === 'Point', 'getEndPoint() returns Point type');
+    assert(endPoint.getX() === 10, 'getEndPoint() returns point at x=10');
+    assert(endPoint.getY() === 0, 'getEndPoint() returns point at y=0');
+    console.log('PASS: LineString.getEndPoint()');
+
+    console.log('Testing LineString.isClosed()...');
+    assert(line.isClosed() === false, 'Open LineString.isClosed() returns false');
+    assert(ring.isClosed() === true, 'LinearRing.isClosed() returns true');
+    // Test closed linestring (but not a LinearRing)
+    const closedLine = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 0, 10 10, 0 0)');
+    assert(closedLine.isClosed() === true, 'Closed LineString.isClosed() returns true');
+    console.log('PASS: LineString.isClosed()');
+
+    console.log('Testing LineString.isRing()...');
+    assert(line.isRing() === false, 'Open LineString.isRing() returns false');
+    assert(ring.isRing() === true, 'LinearRing.isRing() returns true');
+    // A figure-8 is closed but NOT simple (self-intersecting), so not a ring
+    const figureEight = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10, 10 0, 0 10, 0 0)');
+    assert(figureEight.isClosed() === true, 'Figure-8 is closed');
+    assert(figureEight.isRing() === false, 'Figure-8 is not a ring (self-intersecting)');
+    console.log('PASS: LineString.isRing()');
+
+    console.log('Testing LineString.getCoordinateSequence()...');
+    const coordSeq = line.getCoordinateSequence();
+    assert(coordSeq !== null && coordSeq !== undefined, 'getCoordinateSequence() returns sequence');
+    assert(typeof coordSeq.size === 'function', 'CoordinateSequence has size() method');
+    assert(coordSeq.size() === 3, 'CoordinateSequence size matches numPoints (3)');
+    // Also verify it returns valid Coordinate data
+    assert(typeof coordSeq.getX === 'function', 'CoordinateSequence has getX() method');
+    assert(typeof coordSeq.getY === 'function', 'CoordinateSequence has getY() method');
+    assert(coordSeq.getX(1) === 5, 'getX(1) returns 5');
+    assert(coordSeq.getY(1) === 5, 'getY(1) returns 5');
+    console.log('PASS: LineString.getCoordinateSequence()');
+
+    console.log('Testing LinearRing methods...');
+    const ringStartPoint = ring.getStartPoint();
+    const ringEndPoint = ring.getEndPoint();
+    assert(ringStartPoint.getX() === ringEndPoint.getX(), 'LinearRing start and end X match');
+    assert(ringStartPoint.getY() === ringEndPoint.getY(), 'LinearRing start and end Y match');
+    console.log('PASS: LinearRing methods');
+
+    console.log('PASS: All LineString/LinearRing tests completed');
+}
+
+function testEnvelopeMethods() {
+    const env = wasmts.geom.createEnvelope(0, 10, 0, 20);
+
+    console.log('Testing Envelope.getMinX()...');
+    assert(env.getMinX() === 0, 'getMinX() returns 0');
+    console.log('PASS: Envelope.getMinX()');
+
+    console.log('Testing Envelope.getMaxX()...');
+    assert(env.getMaxX() === 10, 'getMaxX() returns 10');
+    console.log('PASS: Envelope.getMaxX()');
+
+    console.log('Testing Envelope.getMinY()...');
+    assert(env.getMinY() === 0, 'getMinY() returns 0');
+    console.log('PASS: Envelope.getMinY()');
+
+    console.log('Testing Envelope.getMaxY()...');
+    assert(env.getMaxY() === 20, 'getMaxY() returns 20');
+    console.log('PASS: Envelope.getMaxY()');
+
+    console.log('Testing Envelope.getWidth()...');
+    assert(env.getWidth() === 10, 'getWidth() returns 10');
+    console.log('PASS: Envelope.getWidth()');
+
+    console.log('Testing Envelope.getHeight()...');
+    assert(env.getHeight() === 20, 'getHeight() returns 20');
+    console.log('PASS: Envelope.getHeight()');
+
+    console.log('Testing Envelope.getArea()...');
+    assert(env.getArea() === 200, 'getArea() returns 200');
+    console.log('PASS: Envelope.getArea()');
+
+    console.log('Testing Envelope.centre()...');
+    const center = env.centre();
+    assert(center !== null, 'centre() returns a coordinate');
+    assert(center.x === 5, 'centre().x returns 5');
+    assert(center.y === 10, 'centre().y returns 10');
+    console.log('PASS: Envelope.centre()');
+
+    console.log('Testing Envelope.expandBy(distance)...');
+    const envExpand1 = wasmts.geom.createEnvelope(0, 10, 0, 20);
+    envExpand1.expandBy(5);
+    assert(envExpand1.getMinX() === -5, 'expandBy(5) minX becomes -5');
+    assert(envExpand1.getMaxX() === 15, 'expandBy(5) maxX becomes 15');
+    assert(envExpand1.getMinY() === -5, 'expandBy(5) minY becomes -5');
+    assert(envExpand1.getMaxY() === 25, 'expandBy(5) maxY becomes 25');
+    console.log('PASS: Envelope.expandBy(distance)');
+
+    console.log('Testing Envelope.expandBy(deltaX, deltaY)...');
+    const envExpand2 = wasmts.geom.createEnvelope(0, 10, 0, 20);
+    envExpand2.expandBy(2, 3);
+    assert(envExpand2.getMinX() === -2, 'expandBy(2,3) minX becomes -2');
+    assert(envExpand2.getMaxX() === 12, 'expandBy(2,3) maxX becomes 12');
+    assert(envExpand2.getMinY() === -3, 'expandBy(2,3) minY becomes -3');
+    assert(envExpand2.getMaxY() === 23, 'expandBy(2,3) maxY becomes 23');
+    console.log('PASS: Envelope.expandBy(deltaX, deltaY)');
+
+    console.log('Testing Envelope.expandToInclude(coord)...');
+    const envInclude1 = wasmts.geom.createEnvelope(0, 10, 0, 20);
+    envInclude1.expandToInclude({ x: 15, y: 25 });
+    assert(envInclude1.getMaxX() === 15, 'expandToInclude(coord) maxX becomes 15');
+    assert(envInclude1.getMaxY() === 25, 'expandToInclude(coord) maxY becomes 25');
+    console.log('PASS: Envelope.expandToInclude(coord)');
+
+    console.log('Testing Envelope.expandToInclude(envelope)...');
+    const envInclude2 = wasmts.geom.createEnvelope(0, 10, 0, 20);
+    const envOther = wasmts.geom.createEnvelope(5, 20, 10, 30);
+    envInclude2.expandToIncludeEnvelope(envOther);
+    assert(envInclude2.getMinX() === 0, 'expandToInclude(env) minX stays 0');
+    assert(envInclude2.getMaxX() === 20, 'expandToInclude(env) maxX becomes 20');
+    assert(envInclude2.getMinY() === 0, 'expandToInclude(env) minY stays 0');
+    assert(envInclude2.getMaxY() === 30, 'expandToInclude(env) maxY becomes 30');
+    console.log('PASS: Envelope.expandToInclude(envelope)');
+
+    console.log('Testing Envelope.intersection(envelope)...');
+    const envInt1 = wasmts.geom.createEnvelope(0, 10, 0, 20);
+    const envInt2 = wasmts.geom.createEnvelope(5, 15, 10, 30);
+    const intersectionEnv = envInt1.intersection(envInt2);
+    assert(intersectionEnv !== null, 'intersection() returns an envelope');
+    assert(intersectionEnv.getMinX() === 5, 'intersection minX is 5');
+    assert(intersectionEnv.getMaxX() === 10, 'intersection maxX is 10');
+    assert(intersectionEnv.getMinY() === 10, 'intersection minY is 10');
+    assert(intersectionEnv.getMaxY() === 20, 'intersection maxY is 20');
+    console.log('PASS: Envelope.intersection(envelope)');
+
+    console.log('Testing Envelope.covers(coord)...');
+    assert(env.covers({ x: 5, y: 10 }) === true, 'covers(coord) inside returns true');
+    assert(env.covers({ x: 0, y: 0 }) === true, 'covers(coord) on boundary returns true');
+    assert(env.covers({ x: 100, y: 100 }) === false, 'covers(coord) outside returns false');
+    console.log('PASS: Envelope.covers(coord)');
+
+    console.log('Testing Envelope.covers(x, y)...');
+    assert(env.coversXY(5, 10) === true, 'covers(x,y) inside returns true');
+    assert(env.coversXY(0, 0) === true, 'covers(x,y) on boundary returns true');
+    assert(env.coversXY(100, 100) === false, 'covers(x,y) outside returns false');
+    console.log('PASS: Envelope.covers(x, y)');
+
+    console.log('Testing Envelope.disjoint(envelope)...');
+    const envDisj1 = wasmts.geom.createEnvelope(0, 10, 0, 10);
+    const envDisj2 = wasmts.geom.createEnvelope(20, 30, 20, 30);
+    const envDisj3 = wasmts.geom.createEnvelope(5, 15, 5, 15);
+    assert(envDisj1.disjoint(envDisj2) === true, 'disjoint envelopes return true');
+    assert(envDisj1.disjoint(envDisj3) === false, 'overlapping envelopes return false');
+    console.log('PASS: Envelope.disjoint(envelope)');
+
+    console.log('Testing Envelope.distance(envelope)...');
+    const envDist1 = wasmts.geom.createEnvelope(0, 10, 0, 10);
+    const envDist2 = wasmts.geom.createEnvelope(20, 30, 0, 10);
+    const dist = envDist1.distance(envDist2);
+    assert(dist === 10, 'distance between separated envelopes is 10');
+    const envDist3 = wasmts.geom.createEnvelope(5, 15, 5, 15);
+    assert(envDist1.distance(envDist3) === 0, 'distance between overlapping envelopes is 0');
+    console.log('PASS: Envelope.distance(envelope)');
+
+    console.log('Testing Envelope.isNull()...');
+    assert(env.isNull() === false, 'valid envelope isNull() returns false');
+    console.log('PASS: Envelope.isNull()');
+
+    console.log('Testing Envelope.setToNull()...');
+    const envNull = wasmts.geom.createEnvelope(0, 10, 0, 20);
+    assert(envNull.isNull() === false, 'before setToNull, isNull() is false');
+    envNull.setToNull();
+    assert(envNull.isNull() === true, 'after setToNull, isNull() is true');
+    console.log('PASS: Envelope.setToNull()');
+
+    console.log('Testing Envelope.copy()...');
+    const envCopy = env.copy();
+    assert(envCopy !== null, 'copy() returns an envelope');
+    assert(envCopy !== env, 'copy is not same reference');
+    assert(envCopy.getMinX() === env.getMinX(), 'copy has same minX');
+    assert(envCopy.getMaxX() === env.getMaxX(), 'copy has same maxX');
+    assert(envCopy.getMinY() === env.getMinY(), 'copy has same minY');
+    assert(envCopy.getMaxY() === env.getMaxY(), 'copy has same maxY');
+    console.log('PASS: Envelope.copy()');
+
+    console.log('Testing Envelope.translate(deltaX, deltaY)...');
+    const envTrans = wasmts.geom.createEnvelope(0, 10, 0, 20);
+    envTrans.translate(5, 10);
+    assert(envTrans.getMinX() === 5, 'translate(5,10) minX becomes 5');
+    assert(envTrans.getMaxX() === 15, 'translate(5,10) maxX becomes 15');
+    assert(envTrans.getMinY() === 10, 'translate(5,10) minY becomes 10');
+    assert(envTrans.getMaxY() === 30, 'translate(5,10) maxY becomes 30');
+    console.log('PASS: Envelope.translate(deltaX, deltaY)');
+
+    console.log('PASS: All Envelope tests completed');
+}
+
+function testGeometryAdditionalMethods() {
+    const point = wasmts.geom.createPoint(5, 10);
+    const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10, 20 0)');
+    const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+    const emptyPoint = wasmts.geom.createEmpty(0);
+
+    console.log('Testing Geometry.getCoordinate()...');
+    const pointCoord = point.getCoordinate();
+    assert(pointCoord !== null, 'Point.getCoordinate() returns a coordinate');
+    assert(pointCoord.x === 5, 'Point.getCoordinate().x === 5');
+    assert(pointCoord.y === 10, 'Point.getCoordinate().y === 10');
+
+    const lineCoord = line.getCoordinate();
+    assert(lineCoord !== null, 'LineString.getCoordinate() returns a coordinate');
+    assert(lineCoord.x === 0, 'LineString.getCoordinate().x === 0 (first point)');
+    assert(lineCoord.y === 0, 'LineString.getCoordinate().y === 0 (first point)');
+
+    const emptyCoord = emptyPoint.getCoordinate();
+    assert(emptyCoord === null, 'Empty geometry.getCoordinate() returns null');
+    console.log('PASS: Geometry.getCoordinate()');
+
+    console.log('Testing Geometry.getFactory()...');
+    const factory = point.getFactory();
+    assert(factory !== null && factory !== undefined, 'getFactory() returns a factory');
+    // Test that the factory can create geometries
+    const newPoint = factory.createPoint(100, 200);
+    assert(newPoint !== null, 'Factory can create new Point');
+    assert(newPoint.getX() === 100, 'Factory-created point has correct X');
+    assert(newPoint.getY() === 200, 'Factory-created point has correct Y');
+    console.log('PASS: Geometry.getFactory()');
+
+    console.log('Testing Geometry.getPrecisionModel()...');
+    const pm = point.getPrecisionModel();
+    assert(pm !== null && pm !== undefined, 'getPrecisionModel() returns a PrecisionModel');
+    // PrecisionModel should have getType() method
+    assert(typeof pm.getType === 'function', 'PrecisionModel has getType() method');
+    const pmType = pm.getType();
+    assert(pmType !== null, 'PrecisionModel.getType() returns a value');
+    console.log('PASS: Geometry.getPrecisionModel(), type:', pmType);
+
+    console.log('Testing Geometry.norm()...');
+    // Create a polygon with coordinates in non-canonical order
+    const unnormalizedPoly = wasmts.io.WKTReader.read('POLYGON ((10 10, 10 0, 0 0, 0 10, 10 10))');
+    const normalizedPoly = unnormalizedPoly.norm();
+    assert(normalizedPoly !== null, 'norm() returns a geometry');
+    assert(normalizedPoly !== unnormalizedPoly, 'norm() returns a different object (copy)');
+    // The normalized polygon should be valid
+    assert(normalizedPoly.isValid() === true, 'norm() result is valid');
+    // Original should be unchanged (still valid, just not normalized)
+    assert(unnormalizedPoly.isValid() === true, 'Original remains valid after norm()');
+    console.log('PASS: Geometry.norm()');
+
+    console.log('Testing Geometry.compareTo()...');
+    // Point < LineString < Polygon in JTS ordering
+    const cmpPointLine = point.compareTo(line);
+    const cmpLinePoly = line.compareTo(poly);
+    const cmpPolyPoint = poly.compareTo(point);
+
+    assert(cmpPointLine < 0, 'Point.compareTo(LineString) < 0');
+    assert(cmpLinePoly < 0, 'LineString.compareTo(Polygon) < 0');
+    assert(cmpPolyPoint > 0, 'Polygon.compareTo(Point) > 0');
+
+    // Same type comparisons
+    const point2 = wasmts.geom.createPoint(5, 10);
+    const cmpSame = point.compareTo(point2);
+    assert(cmpSame === 0, 'Equal points compareTo returns 0');
+
+    const point3 = wasmts.geom.createPoint(100, 100);
+    const cmpDiff = point.compareTo(point3);
+    assert(typeof cmpDiff === 'number', 'compareTo returns a number');
+    console.log('PASS: Geometry.compareTo()');
+
+    console.log('PASS: All Geometry Additional Methods tests completed');
 }
 
 function assert(condition, message) {

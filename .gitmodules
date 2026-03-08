@@ -1,7 +1,7 @@
 [submodule "graal"]
 	path = graal
-	url = https://github.com/willcohen/graal.git
-	branch = web-image-race-condition
+	url = https://github.com/oracle/graal.git
+	branch = master
 [submodule "mx"]
 	path = mx
 	url = https://github.com/graalvm/mx.git

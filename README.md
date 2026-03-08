@@ -31,6 +31,8 @@ Currently available:
 - LineMerger for combining connected linestrings
 - CascadedPolygonUnion for efficient multi-polygon union
 - Spatial predicates: contains, intersects, touches, crosses, within, overlaps, covers, coveredBy, equalsTopo
+- Spatial relationships: relate() returns IntersectionMatrix (DE-9IM), pattern matching
+- Dimension constants and conversion methods
 - Validation: isSimple, isRectangle, isEmpty, isValid
 - 2D, 3D (XYZ), and 4D (XYZM) coordinate support
 - PreparedGeometry for optimized repeated predicates
@@ -330,6 +332,23 @@ All creation methods return geometry objects with shape `{type: string, _jtsGeom
 **Envelopes:**
 - `wasmts.geom.createEnvelope(minX, maxX, minY, maxY)` - Create bounding box
 
+**LinearRings:**
+- `wasmts.geom.createLinearRing([{x, y}, ...])` - Create closed ring (first=last point)
+
+**Multi-Geometries:**
+- `wasmts.geom.createMultiPoint([point1, point2, ...])` - Create from Point array
+- `wasmts.geom.createMultiLineString([line1, line2, ...])` - Create from LineString array
+- `wasmts.geom.createMultiPolygon([poly1, poly2, ...])` - Create from Polygon array
+- `wasmts.geom.createGeometryCollection([geom1, geom2, ...])` - Create mixed collection
+
+**Empty Geometries:**
+- `wasmts.geom.createEmpty(0)` - Empty Point
+- `wasmts.geom.createEmpty(1)` - Empty LineString
+- `wasmts.geom.createEmpty(2)` - Empty Polygon
+
+**Envelope to Geometry:**
+- `wasmts.geom.toGeometry(envelope)` - Convert Envelope to Polygon
+
 **From WKT/WKB** (alternative for complex geometries):
 - `wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)')` - Parse WKT
 - `wasmts.io.WKTReader.read('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0))')` - Parse WKT
@@ -364,19 +383,35 @@ console.log(coords[0]); // {x: 5, y: 10, z: 15, m: 20}
 
 WKB is typically 2-3x more compact than WKT and faster to parse.
 
-**GeoJSON** - Standard format for web mapping:
+**GeoJSON** - Standard format for web mapping (uses native JTS GeoJsonReader/GeoJsonWriter):
+
+**Static API (quick read/write):**
 - `wasmts.io.GeoJSONReader.read(geojsonString)` - Parse GeoJSON string to geometry
 - `wasmts.io.GeoJSONWriter.write(geometry)` - Convert geometry to GeoJSON string
 
-```javascript
-// Read GeoJSON
-const poly = wasmts.io.GeoJSONReader.read('{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}');
-console.log('Area:', poly.getArea()); // 100
+**Instance API (full control):**
+- `wasmts.io.GeoJSONWriter.create()` - Create default writer instance
+- `wasmts.io.GeoJSONWriter.createWithDecimals(n)` - Create writer with decimal precision
+- `writer.setEncodeCRS(boolean)` - Include CRS property in output
+- `writer.setForceCCW(boolean)` - RFC 7946 counter-clockwise polygon orientation
+- `writer.write(geometry)` - Write geometry to GeoJSON string
+- `wasmts.io.GeoJSONReader.create()` - Create reader instance
+- `reader.read(geojsonString)` - Parse GeoJSON string to geometry
 
-// Write GeoJSON
-const point = wasmts.geom.createPoint(5, 10);
-const geojson = wasmts.io.GeoJSONWriter.write(point);
-console.log(geojson); // {"type":"Point","coordinates":[5,10]}
+```javascript
+// Quick static API
+const poly = wasmts.io.GeoJSONReader.read('{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}');
+const geojson = wasmts.io.GeoJSONWriter.write(poly);
+
+// Instance API with options
+const writer = wasmts.io.GeoJSONWriter.create();
+writer.setForceCCW(true);    // RFC 7946 compliance
+writer.setEncodeCRS(false);  // Omit CRS from output
+const json = writer.write(poly);
+
+// Decimal precision control
+const preciseWriter = wasmts.io.GeoJSONWriter.createWithDecimals(6);
+const preciseJson = preciseWriter.write(poly);
 
 // 3D coordinates preserved
 const point3d = wasmts.io.GeoJSONReader.read('{"type":"Point","coordinates":[5,10,15]}');
@@ -385,12 +420,6 @@ console.log(coords[0].z); // 15
 ```
 
 Supports all geometry types: Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon, GeometryCollection.
-
-**Note:** The GeoJSON reader/writer is a custom JavaScript implementation using `JSON.parse()`/`JSON.stringify()` rather than JTS's native `GeoJsonReader`/`GeoJsonWriter` classes (which require external JSON libraries not available in the WASM environment). The current implementation provides basic read/write functionality but does not yet expose the full JTS GeoJSON API options:
-- `setForceCCW(boolean)` - RFC 7946 counter-clockwise polygon ring orientation
-- `setEncodeCRS(boolean)` - Include CRS property in output
-- Precision/decimal control in writer
-- Custom `GeometryFactory` in reader for CRS/SRID handling
 
 ### Operations (`wasmts.geom.*`)
 
@@ -443,6 +472,128 @@ All return numbers (except isEmpty/isValid/isSimple/isRectangle which return boo
 - `wasmts.geom.isSimple(geometry)` - Check if geometry has no self-intersections
 - `wasmts.geom.isRectangle(geometry)` - Check if polygon is a rectangle
 
+### Geometry Base Class Methods
+
+Additional methods available on all geometry objects:
+
+- `geometry.getDimension()` - Topological dimension (0=point, 1=line, 2=area)
+- `geometry.getBoundaryDimension()` - Boundary dimension (-1=empty, 0=point, 1=line)
+- `geometry.relate(other)` - Returns IntersectionMatrix (DE-9IM)
+- `geometry.relate(other, pattern)` - Returns true if relationship matches pattern
+- `geometry.equalsExact(other, tolerance)` - Coordinate-wise equality with tolerance
+- `geometry.equalsNorm(other)` - Equality after normalization
+- `geometry.isWithinDistance(other, distance)` - True if within distance
+- `geometry.getSRID()` / `geometry.setSRID(srid)` - Spatial reference ID
+- `geometry.union()` - Unary union (for MultiGeometry, merges components)
+- `geometry.getCoordinate()` - Get first coordinate (or null if empty)
+- `geometry.getFactory()` - Get the GeometryFactory that created this geometry
+- `geometry.getPrecisionModel()` - Get the PrecisionModel (has `getType()` method)
+- `geometry.norm()` - Returns normalized copy (original unchanged)
+- `geometry.compareTo(other)` - Compare geometries (for sorting: Point < LineString < Polygon)
+
+### Point Methods
+
+Point-specific accessors:
+
+- `point.getX()` - Get X coordinate
+- `point.getY()` - Get Y coordinate
+
+```javascript
+const point = wasmts.geom.createPoint(3, 4);
+console.log(point.getX()); // 3
+console.log(point.getY()); // 4
+```
+
+### LineString / LinearRing Methods
+
+LineString and LinearRing specific accessors:
+
+- `line.getPointN(n)` - Get Point at index n
+- `line.getStartPoint()` - Get first Point
+- `line.getEndPoint()` - Get last Point
+- `line.isClosed()` - True if first point equals last point
+- `line.isRing()` - True if closed AND simple (no self-intersection)
+- `line.getCoordinateSequence()` - Get CoordinateSequence wrapper
+
+```javascript
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 5 5, 10 0)');
+
+console.log(line.getStartPoint().getX()); // 0
+console.log(line.getEndPoint().getX());   // 10
+console.log(line.getPointN(1).getX());    // 5
+
+console.log(line.isClosed()); // false
+console.log(line.isRing());   // false
+
+const ring = wasmts.io.WKTReader.read('LINEARRING (0 0, 10 0, 10 10, 0 10, 0 0)');
+console.log(ring.isClosed()); // true
+console.log(ring.isRing());   // true
+
+// Access coordinate sequence
+const seq = line.getCoordinateSequence();
+console.log(seq.size());    // 3
+console.log(seq.getX(1));   // 5
+```
+
+### IntersectionMatrix (DE-9IM)
+
+The `relate()` method returns an IntersectionMatrix representing the DE-9IM spatial relationship:
+
+```javascript
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const point = wasmts.geom.createPoint(5, 5);
+
+// Get relationship matrix
+const matrix = poly.relate(point);
+console.log(matrix.toString()); // "0F2FF1FF2"
+
+// Query predicates
+console.log(matrix.isContains());   // true
+console.log(matrix.isIntersects()); // true
+
+// Pattern matching
+console.log(matrix.matches('T*F**FFF*')); // true
+
+// Create matrix directly
+const m = new wasmts.geom.IntersectionMatrix('T*F**FFF*');
+```
+
+**Constructor:** `new wasmts.geom.IntersectionMatrix()` or `new wasmts.geom.IntersectionMatrix(pattern)`
+
+**Instance methods:** `toString()`, `get(row, col)`, `set(row, col, value)`, `set(pattern)`, `setAll(value)`, `matches(pattern)`, `transpose()`, `add(other)`, `setAtLeast(row, col, min)`
+
+**Predicates:** `isDisjoint()`, `isIntersects()`, `isWithin()`, `isContains()`, `isCovers()`, `isCoveredBy()`, `isTouches(dimA, dimB)`, `isCrosses(dimA, dimB)`, `isEquals(dimA, dimB)`, `isOverlaps(dimA, dimB)`
+
+**Static methods:** `IntersectionMatrix.isTrue(dimValue)`, `IntersectionMatrix.matches(dimValue, symbol)`
+
+### Dimension Constants
+
+The `wasmts.geom.Dimension` object provides DE-9IM dimension constants:
+
+```javascript
+const Dimension = wasmts.geom.Dimension;
+
+// Value constants
+Dimension.P         // 0 (point)
+Dimension.L         // 1 (line)
+Dimension.A         // 2 (area)
+Dimension.FALSE     // -1
+Dimension.TRUE      // -2
+Dimension.DONTCARE  // -3
+
+// Symbol constants
+Dimension.SYM_P         // '0'
+Dimension.SYM_L         // '1'
+Dimension.SYM_A         // '2'
+Dimension.SYM_FALSE     // 'F'
+Dimension.SYM_TRUE      // 'T'
+Dimension.SYM_DONTCARE  // '*'
+
+// Conversion methods
+Dimension.toDimensionSymbol(-1)  // 'F'
+Dimension.toDimensionValue('T')  // -2
+```
+
 ### Coordinate & Geometry Access (`wasmts.geom.*`)
 
 - `wasmts.geom.getCoordinates(geometry)` - Extract all coordinates
@@ -490,11 +641,38 @@ if (numHoles > 0) {
 
 ### Envelopes (Bounding Boxes) (`wasmts.geom.*`)
 
+**Creation:**
 - `wasmts.geom.createEnvelope(minX, maxX, minY, maxY)` - Create envelope from bounds
 - `wasmts.geom.getEnvelopeInternal(geometry)` - Get geometry's bounding box
+
+**Accessors (instance methods on envelope objects):**
+- `env.getMinX()`, `env.getMaxX()`, `env.getMinY()`, `env.getMaxY()` - Get bounds
+- `env.getWidth()`, `env.getHeight()` - Get dimensions
+- `env.getArea()` - Get area (width * height)
+- `env.centre()` - Get center as `{x, y}` coordinate
+
+**Expansion (mutating):**
+- `env.expandBy(distance)` - Expand all sides by distance
+- `env.expandBy(deltaX, deltaY)` - Expand asymmetrically
+- `env.expandToInclude({x, y})` - Expand to include coordinate
+- `env.expandToIncludeEnvelope(other)` - Expand to include another envelope
+
+**Spatial operations:**
+- `env.intersection(other)` - Get intersection envelope
+- `env.covers({x, y})` - Test if envelope covers coordinate
+- `env.coversXY(x, y)` - Test if envelope covers point
+- `env.disjoint(other)` - Test if envelopes are disjoint
+- `env.distance(other)` - Distance between envelopes (0 if overlapping)
+
+**Utility:**
+- `env.isNull()` - Test if envelope is null/empty
+- `env.setToNull()` - Reset envelope to null state
+- `env.copy()` - Create independent copy
+- `env.translate(deltaX, deltaY)` - Shift envelope by offset
+
+**Static methods (functional API):**
 - `wasmts.geom.envelopeIntersects(env1, env2)` - Test if envelopes intersect
 - `wasmts.geom.envelopeContains(env1, env2)` - Test if env1 contains env2
-- `wasmts.geom.expandToInclude(envelope, x, y)` - Expand envelope to include point
 
 ### Spatial Indexing (`wasmts.index.strtree.*`)
 
@@ -787,6 +965,10 @@ This project contains and distributes the full source code of **JTS (Java Topolo
 - **Eclipse Distribution License v1.0** ([LICENSE_EDLv1.txt](LICENSE_EDLv1.txt))
 
 You may use JTS under either license. See the [JTS project](https://github.com/locationtech/jts) for more information.
+
+This project also includes **json-simple 1.1.1** (transitive dependency of jts-io-common), which is licensed under:
+
+- **Apache License 2.0** ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0))
 
 The npm distribution also includes the **GraalVM WebAssembly loader** (the JavaScript runtime code in `wasmts.js`), which is part of GraalVM and is licensed under:
 

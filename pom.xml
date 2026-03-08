@@ -43,6 +43,13 @@
             <version>${jts.version}</version>
         </dependency>
 
+        <!-- JTS I/O Common (GeoJSON support) -->
+        <dependency>
+            <groupId>org.locationtech.jts.io</groupId>
+            <artifactId>jts-io-common</artifactId>
+            <version>${jts.version}</version>
+        </dependency>
+
         <!-- GraalVM WebAssembly Preview API - using local graal submodule sources -->
         <!-- Commented out: using local sources instead of Maven Central artifact
         <dependency>
