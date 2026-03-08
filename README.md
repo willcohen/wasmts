@@ -12,15 +12,15 @@ A WebAssembly port of [JTS (Java Topology Suite)](https://github.com/locationtec
 
 ## Status
 
-**Current**: JTS 1.20.0 compiled to WebAssembly with JavaScript API
+JTS 1.20.0 compiled to WebAssembly with JavaScript API.
 
-**Note**: This is a proof-of-concept wrapper providing basic JTS functionality. Adding new functionality requires creating Java wrapper methods in `API.java`, exporting them to JavaScript using annotations, and handling type conversions. This isn't particularly difficult but it still isn't fully automatic.
+This is a proof-of-concept wrapper providing basic JTS functionality. Adding new functionality requires creating Java wrapper methods in `API.java`, exporting them to JavaScript using annotations, and handling type conversions. This isn't particularly difficult but it still isn't fully automatic.
 
 **[Request additional JTS features →](https://github.com/willcohen/wasmts/issues/1)**
 
 Currently available:
-- **Object-oriented API** - Call methods directly on geometries: `point.buffer(10)`, `poly.union(other)`
-- **Functional API** - Also available: `wasmts.geom.buffer(point, 10)`
+- Object-oriented API - call methods directly on geometries: `point.buffer(10)`, `poly.union(other)`
+- Functional API - also available: `wasmts.geom.buffer(point, 10)`
 - WASM binary compiled from JTS source
 - Automatic memory management via JavaScript GC
 - Geometry types: Point, LineString, Polygon, Multi*, GeometryCollection
@@ -42,7 +42,7 @@ Currently available:
 - User data attachment (getUserData/setUserData)
 - CoordinateSequence access via `geometry.apply(filter)` for coordinate transformations
 
-**API Design**: The functional API (`wasmts.geom.*`) is the primary implementation. The OO API (`geom.buffer()`) is syntactic sugar that delegates to the functional API.
+The functional API (`wasmts.geom.*`) is the primary implementation. The OO API (`geom.buffer()`) is syntactic sugar that delegates to the functional API.
 
 ## Quick Start
 
@@ -54,9 +54,9 @@ Currently available:
 
 ### Build
 
-**Option 1: Build GraalVM from submodules (recommended)**
+#### Build GraalVM from submodules (recommended)
 
-Due to a race condition bug in GraalVM web-image ([#12676](https://github.com/oracle/graal/issues/12676)), this project includes patched GraalVM as a submodule:
+This project uses a GraalVM submodule to pick up bug fixes ([#12676](https://github.com/oracle/graal/issues/12676)) not yet in a GraalVM release:
 
 ```bash
 # Clone with submodules
@@ -77,7 +77,7 @@ The build script requires:
 - SDKMAN installed (`curl -s "https://get.sdkman.io" | bash`)
 - Labs JDK installed (`sdk install java labsjdk-ce-latest`)
 
-**Option 2: Use existing GraalVM (when upstream fix is merged)**
+#### Use existing GraalVM (when fix is in a release)
 
 ```bash
 # Symlink to your GraalVM installation
@@ -91,14 +91,14 @@ ls ./graal-home/lib/svm/tools/svm-wasm
 mvn clean package
 ```
 
-**What Maven does:**
+What Maven does:
 1. Downloads JTS 1.20.0 from Maven Central
 2. Compiles against local GraalVM webimage API (from submodule)
 3. Compiles Java source code
 4. Runs `native-image --tool:svm-wasm` to build WebAssembly
 5. Copies output files to project root
 
-**Output:**
+Output:
 - `dist/wasmts.js` - WASM loader (107KB)
 - `dist/wasmts.js.wasm` - WASM binary (5.7MB)
 - `target/wasmts.js.wat` - WebAssembly text format (debug only)
@@ -127,9 +127,9 @@ import('wasmts').then(() => {
 
 ### Usage in Browser
 
-The generated WASM works in **any modern browser** with no modifications needed.
+The generated WASM works in any modern browser with no modifications needed.
 
-**Method 1: Serve locally with a simple HTTP server:**
+#### Serve locally with a simple HTTP server
 
 ```bash
 # Python 3
@@ -141,7 +141,7 @@ npx http-server -p 8000
 # Then open: http://localhost:8000/docs/
 ```
 
-**Method 2: Use in your web app:**
+#### Use in your web app
 
 ```html
 <!DOCTYPE html>
@@ -194,19 +194,17 @@ npx http-server -p 8000
 </html>
 ```
 
-**Important notes**:
+Important notes:
 - Use `<script src="wasmts.js"></script>` (NOT `import()`) so the loader can find the `.wasm` file
 - WASM initialization is asynchronous - wait for `wasmts` namespace before calling functions
 - Both `wasmts.js` and `wasmts.js.wasm` must be in the same directory
 - See [docs/index.html](docs/index.html) for a complete working example
 
-**Interactive demo**: Open [docs/index.html](docs/index.html) to test geometry creation, operations, and spatial indexing.
-
-**Browser compatibility**: Any modern browser with WebAssembly support (Chrome, Firefox, Safari, Edge).
+Open [docs/index.html](docs/index.html) for an interactive demo. Works in any modern browser with WebAssembly support (Chrome, Firefox, Safari, Edge).
 
 ### API Examples
 
-**Basic Usage:**
+Basic usage:
 
 ```javascript
 // Create 2D point
@@ -231,7 +229,7 @@ const intersection = poly.intersection(buffered);
 console.log('Union area:', union.getArea().toFixed(2));
 ```
 
-**3D/4D Coordinates:**
+3D/4D coordinates:
 
 ```javascript
 // Create 3D point (XYZ - with elevation)
@@ -256,7 +254,7 @@ const parsedCoords = parsed.getCoordinates();
 console.log('Round-trip preserved M:', parsedCoords[0].m); // 20
 ```
 
-**WKT/WKB I/O:**
+WKT/WKB I/O:
 
 ```javascript
 // WKT - human readable text format
@@ -273,7 +271,7 @@ const geomFromWKB = wasmts.io.WKBReader.read(wkb);
 console.log('Round-trip:', geomFromWKB.equals(poly));
 ```
 
-**Spatial Indexing with STRtree:**
+Spatial indexing with STRtree:
 
 ```javascript
 const index = wasmts.index.strtree.STRtree.create();
@@ -291,7 +289,7 @@ See full examples: [test/test-node.mjs](test/test-node.mjs), [docs/index.html](d
 
 ### GeometryFactory (`wasmts.geom.GeometryFactory`)
 
-**Standard JTS factory pattern** - Creates a factory instance:
+Standard JTS factory pattern - creates a factory instance:
 
 ```javascript
 const factory = wasmts.geom.GeometryFactory();
@@ -313,47 +311,45 @@ const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
 
 ### Geometry Creation (`wasmts.geom.*` static methods)
 
-All creation methods return geometry objects with shape `{type: string, _jtsGeom: JavaObject}`.
-
-**Points:**
+Points:
 - `wasmts.geom.createPoint(x, y)` - Create 2D point
 - `wasmts.geom.createPoint(x, y, z)` - Create 3D point (XYZ)
 - `wasmts.geom.createPoint(x, y, z, m)` - Create 4D point (XYZM with measure)
 
-**LineStrings:**
+LineStrings:
 - `wasmts.geom.createLineString([{x, y}, {x, y}, ...])` - Create from coordinate array
 - Supports 3D: `[{x, y, z}, ...]` and 4D: `[{x, y, z, m}, ...]`
 
-**Polygons:**
+Polygons:
 - `wasmts.geom.createPolygon(shell)` - Create simple polygon from coordinate array
 - `wasmts.geom.createPolygon(shell, [hole1, hole2, ...])` - Create polygon with holes
 - Each ring is an array of `{x, y}` (or `{x, y, z}`, `{x, y, z, m}`) objects
 
-**Envelopes:**
+Envelopes:
 - `wasmts.geom.createEnvelope(minX, maxX, minY, maxY)` - Create bounding box
 
-**LinearRings:**
+LinearRings:
 - `wasmts.geom.createLinearRing([{x, y}, ...])` - Create closed ring (first=last point)
 
-**Multi-Geometries:**
+Multi-geometries:
 - `wasmts.geom.createMultiPoint([point1, point2, ...])` - Create from Point array
 - `wasmts.geom.createMultiLineString([line1, line2, ...])` - Create from LineString array
 - `wasmts.geom.createMultiPolygon([poly1, poly2, ...])` - Create from Polygon array
 - `wasmts.geom.createGeometryCollection([geom1, geom2, ...])` - Create mixed collection
 
-**Empty Geometries:**
+Empty geometries:
 - `wasmts.geom.createEmpty(0)` - Empty Point
 - `wasmts.geom.createEmpty(1)` - Empty LineString
 - `wasmts.geom.createEmpty(2)` - Empty Polygon
 
-**Envelope to Geometry:**
+Envelope to geometry:
 - `wasmts.geom.toGeometry(envelope)` - Convert Envelope to Polygon
 
-**From WKT/WKB** (alternative for complex geometries):
+From WKT/WKB (alternative for complex geometries):
 - `wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)')` - Parse WKT
 - `wasmts.io.WKTReader.read('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0))')` - Parse WKT
 
-**3D/4D Coordinates:**
+3D/4D coordinates:
 
 Coordinates returned by `getCoordinates()` include Z and M values when present:
 ```javascript
@@ -368,28 +364,26 @@ console.log(coords[0]); // {x: 5, y: 10, z: 15, m: 20}
 
 ### I/O (`wasmts.io.*`)
 
-**WKT (Well-Known Text)** - Human-readable text format:
+WKT (Well-Known Text) - human-readable text format:
 - `wasmts.io.WKTReader.read(wkt)` - Parse WKT string
   - 2D: `'POINT (5 10)'`
   - 3D: `'POINT Z (5 10 15)'`
   - 4D: `'POINT ZM (5 10 15 20)'`
 - `wasmts.io.WKTWriter.write(geometry)` - Convert geometry to WKT string
 
-**WKB (Well-Known Binary)** - Compact binary format:
+WKB (Well-Known Binary) - compact binary format:
 - `wasmts.io.WKBReader.read(uint8Array)` - Parse WKB bytes (Uint8Array)
 - `wasmts.io.WKBWriter.write(geometry)` - Convert geometry to WKB (returns Uint8Array)
   - Automatically detects 2D/3D/4D based on coordinate dimensions
   - Preserves Z and M values in round-trip
 
-WKB is typically 2-3x more compact than WKT and faster to parse.
+GeoJSON (uses native JTS GeoJsonReader/GeoJsonWriter):
 
-**GeoJSON** - Standard format for web mapping (uses native JTS GeoJsonReader/GeoJsonWriter):
-
-**Static API (quick read/write):**
+Static API:
 - `wasmts.io.GeoJSONReader.read(geojsonString)` - Parse GeoJSON string to geometry
 - `wasmts.io.GeoJSONWriter.write(geometry)` - Convert geometry to GeoJSON string
 
-**Instance API (full control):**
+Instance API:
 - `wasmts.io.GeoJSONWriter.create()` - Create default writer instance
 - `wasmts.io.GeoJSONWriter.createWithDecimals(n)` - Create writer with decimal precision
 - `writer.setEncodeCRS(boolean)` - Include CRS property in output
@@ -419,17 +413,16 @@ const coords = point3d.getCoordinates();
 console.log(coords[0].z); // 15
 ```
 
-Supports all geometry types: Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon, GeometryCollection.
 
 ### Operations (`wasmts.geom.*`)
 
-**Boolean Operations:**
+Boolean operations:
 - `wasmts.geom.union(geom1, geom2)` - Union of two geometries
 - `wasmts.geom.intersection(geom1, geom2)` - Intersection of two geometries
 - `wasmts.geom.difference(geom1, geom2)` - Difference (geom1 minus geom2)
 - `wasmts.geom.symDifference(geom1, geom2)` - Symmetric difference
 
-**Geometric Operations:**
+Geometric operations:
 - `wasmts.geom.buffer(geometry, distance)` - Create buffer around geometry
 - `wasmts.geom.bufferWithParams(geometry, distance, endCapStyle, joinStyle, mitreLimit)` - Buffer with custom parameters
 - `wasmts.geom.convexHull(geometry)` - Compute convex hull
@@ -558,13 +551,13 @@ console.log(matrix.matches('T*F**FFF*')); // true
 const m = new wasmts.geom.IntersectionMatrix('T*F**FFF*');
 ```
 
-**Constructor:** `new wasmts.geom.IntersectionMatrix()` or `new wasmts.geom.IntersectionMatrix(pattern)`
+Constructor: `new wasmts.geom.IntersectionMatrix()` or `new wasmts.geom.IntersectionMatrix(pattern)`
 
-**Instance methods:** `toString()`, `get(row, col)`, `set(row, col, value)`, `set(pattern)`, `setAll(value)`, `matches(pattern)`, `transpose()`, `add(other)`, `setAtLeast(row, col, min)`
+Instance methods: `toString()`, `get(row, col)`, `set(row, col, value)`, `set(pattern)`, `setAll(value)`, `matches(pattern)`, `transpose()`, `add(other)`, `setAtLeast(row, col, min)`
 
-**Predicates:** `isDisjoint()`, `isIntersects()`, `isWithin()`, `isContains()`, `isCovers()`, `isCoveredBy()`, `isTouches(dimA, dimB)`, `isCrosses(dimA, dimB)`, `isEquals(dimA, dimB)`, `isOverlaps(dimA, dimB)`
+Predicates: `isDisjoint()`, `isIntersects()`, `isWithin()`, `isContains()`, `isCovers()`, `isCoveredBy()`, `isTouches(dimA, dimB)`, `isCrosses(dimA, dimB)`, `isEquals(dimA, dimB)`, `isOverlaps(dimA, dimB)`
 
-**Static methods:** `IntersectionMatrix.isTrue(dimValue)`, `IntersectionMatrix.matches(dimValue, symbol)`
+Static methods: `IntersectionMatrix.isTrue(dimValue)`, `IntersectionMatrix.matches(dimValue, symbol)`
 
 ### Dimension Constants
 
@@ -605,8 +598,6 @@ Dimension.toDimensionValue('T')  // -2
 - `wasmts.geom.getUserData(geometry)` - Get user-defined data attached to geometry
 - `wasmts.geom.setUserData(geometry, data)` - Attach user-defined data to geometry
 
-**Note**: To get a point's coordinates, use `getCoordinates(point)[0].x` and `getCoordinates(point)[0].y`
-
 ### Polygon Accessors (`wasmts.geom.*`)
 
 Access exterior ring and interior holes of polygon geometries:
@@ -637,46 +628,46 @@ if (numHoles > 0) {
 }
 ```
 
-**Note**: These methods only work on Polygon geometries. Calling them on other geometry types will throw an error.
+These methods only work on Polygon geometries.
 
 ### Envelopes (Bounding Boxes) (`wasmts.geom.*`)
 
-**Creation:**
+Creation:
 - `wasmts.geom.createEnvelope(minX, maxX, minY, maxY)` - Create envelope from bounds
 - `wasmts.geom.getEnvelopeInternal(geometry)` - Get geometry's bounding box
 
-**Accessors (instance methods on envelope objects):**
+Accessors (instance methods on envelope objects):
 - `env.getMinX()`, `env.getMaxX()`, `env.getMinY()`, `env.getMaxY()` - Get bounds
 - `env.getWidth()`, `env.getHeight()` - Get dimensions
 - `env.getArea()` - Get area (width * height)
 - `env.centre()` - Get center as `{x, y}` coordinate
 
-**Expansion (mutating):**
+Expansion (mutating):
 - `env.expandBy(distance)` - Expand all sides by distance
 - `env.expandBy(deltaX, deltaY)` - Expand asymmetrically
 - `env.expandToInclude({x, y})` - Expand to include coordinate
 - `env.expandToIncludeEnvelope(other)` - Expand to include another envelope
 
-**Spatial operations:**
+Spatial operations:
 - `env.intersection(other)` - Get intersection envelope
 - `env.covers({x, y})` - Test if envelope covers coordinate
 - `env.coversXY(x, y)` - Test if envelope covers point
 - `env.disjoint(other)` - Test if envelopes are disjoint
 - `env.distance(other)` - Distance between envelopes (0 if overlapping)
 
-**Utility:**
+Utility:
 - `env.isNull()` - Test if envelope is null/empty
 - `env.setToNull()` - Reset envelope to null state
 - `env.copy()` - Create independent copy
 - `env.translate(deltaX, deltaY)` - Shift envelope by offset
 
-**Static methods (functional API):**
+Static methods (functional API):
 - `wasmts.geom.envelopeIntersects(env1, env2)` - Test if envelopes intersect
 - `wasmts.geom.envelopeContains(env1, env2)` - Test if env1 contains env2
 
 ### Spatial Indexing (`wasmts.index.strtree.*`)
 
-**STRtree** - Sort-Tile-Recursive tree for fast spatial queries (10-100x speedup):
+STRtree - Sort-Tile-Recursive tree for spatial queries:
 
 - `wasmts.index.strtree.STRtree.create()` - Create new STRtree index
 - `wasmts.index.strtree.STRtree.insert(tree, envelope, item)` - Insert item with bounding box
@@ -686,14 +677,14 @@ if (numHoles > 0) {
 
 ### PreparedGeometry (`wasmts.geom.prep.*`)
 
-**PreparedGeometry** - Optimized for repeated spatial predicates against the same geometry:
+Optimized for repeated spatial predicates against the same geometry:
 
 ```javascript
 // Prepare a geometry for repeated predicate tests
 const polygon = wasmts.io.WKTReader.read('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0))');
 const prepared = wasmts.geom.prep.PreparedGeometryFactory.prepare(polygon);
 
-// Test many points against the prepared polygon (faster than regular predicates)
+// Test many points against the prepared polygon
 const testPoints = [
     wasmts.geom.createPoint(50, 50),
     wasmts.geom.createPoint(150, 150),
@@ -723,11 +714,9 @@ Available methods:
 - `wasmts.geom.prep.PreparedGeometry.within(prepGeom, testGeom)` - True if prepGeom is within testGeom
 - `wasmts.geom.prep.PreparedGeometry.getGeometry(prepGeom)` - Extract the underlying Geometry object
 
-Use PreparedGeometry when testing many geometries against a single fixed geometry.
-
 ### Geometry Analysis Algorithms (`wasmts.algorithm.*`)
 
-**Minimum bounding shapes** - Find optimal bounding rectangles and circles for geometries:
+Minimum bounding shapes:
 
 ```javascript
 // Create an irregular polygon
@@ -758,7 +747,7 @@ Available algorithms:
 
 ### Advanced Buffering
 
-**Custom buffer parameters** - The `buffer()` method accepts optional parameters to control cap style, join style, and mitre limit:
+The `buffer()` method accepts optional parameters to control cap style, join style, and mitre limit:
 
 ```javascript
 // Buffer parameter constants (from JTS BufferParameters)
@@ -784,9 +773,9 @@ const mitreBuffer = poly.buffer(0.5, CAP_ROUND, JOIN_MITRE, 10.0);
 const eroded = poly.buffer(-0.5, CAP_ROUND, JOIN_ROUND, 5.0);
 ```
 
-**Signature:** `geometry.buffer(distance, endCapStyle?, joinStyle?, mitreLimit?)`
+Signature: `geometry.buffer(distance, endCapStyle?, joinStyle?, mitreLimit?)`
 
-**Parameters:**
+Parameters:
 - `distance`: Buffer distance (positive for expansion, negative for erosion)
 - `endCapStyle` (optional): 1=ROUND, 2=FLAT, 3=SQUARE
 - `joinStyle` (optional): 1=ROUND, 2=MITRE, 3=BEVEL
@@ -794,7 +783,7 @@ const eroded = poly.buffer(-0.5, CAP_ROUND, JOIN_ROUND, 5.0);
 
 ### Offset Curves
 
-**Parallel line generation** - The `offsetCurve()` method creates a parallel line at a specified distance from the input geometry:
+Creates a parallel line at a specified distance from the input geometry:
 
 ```javascript
 const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 0, 10 10)');
@@ -812,13 +801,13 @@ const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0))')
 const polyOffset = wasmts.operation.buffer.OffsetCurveBuilder.getOffsetCurve(poly, 3);
 ```
 
-**Signature:** `wasmts.operation.buffer.OffsetCurveBuilder.getOffsetCurve(geometry, distance, endCapStyle?, joinStyle?, mitreLimit?)`
+Signature: `wasmts.operation.buffer.OffsetCurveBuilder.getOffsetCurve(geometry, distance, endCapStyle?, joinStyle?, mitreLimit?)`
 
-**Parameters:** Same as `buffer()` - see Advanced Buffering section above.
+Parameters: same as `buffer()` above.
 
 ### LineMerger
 
-**Merge connected linestrings** - Combines contiguous line segments into longer linestrings:
+Combines contiguous line segments into longer linestrings:
 
 ```javascript
 // Create separate line segments that connect end-to-end
@@ -841,14 +830,13 @@ const merged = wasmts.operation.linemerge.LineMerger.getMergedLineStrings(merger
 // Result: 2 lines (line1+line2+line3 merged into one, line4 separate)
 ```
 
-**API:**
 - `wasmts.operation.linemerge.LineMerger.create()` - Create a new LineMerger instance
 - `wasmts.operation.linemerge.LineMerger.add(merger, geometry)` - Add line(s) to merge
 - `wasmts.operation.linemerge.LineMerger.getMergedLineStrings(merger)` - Get array of merged linestrings
 
 ### CascadedPolygonUnion
 
-**Efficient multi-polygon union** - Union many polygons at once (faster than sequential pairwise unions):
+Union many polygons at once:
 
 ```javascript
 const poly1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
@@ -860,12 +848,11 @@ const union = wasmts.operation.union.CascadedPolygonUnion.union([poly1, poly2, p
 console.log('Union area:', union.getArea());
 ```
 
-**API:**
 - `wasmts.operation.union.CascadedPolygonUnion.union(polygonArray)` - Union array of polygons
 
 ### CoordinateSequence and CoordinateSequenceFilter
 
-**Transform coordinates** - Access and modify geometry coordinates via the JTS CoordinateSequenceFilter pattern:
+Access and modify geometry coordinates via the JTS CoordinateSequenceFilter pattern:
 
 ```javascript
 // Create a polygon
@@ -908,7 +895,7 @@ const lifted = point3d.apply((seq, i) => {
 console.log('Lifted Z:', lifted.getCoordinates()[0].z); // 115
 ```
 
-**CoordinateSequence methods** (available on `seq` parameter in filter callback):
+CoordinateSequence methods (available on `seq` parameter in filter callback):
 - `getX(i)`, `getY(i)`, `getZ(i)`, `getM(i)` - Get ordinate values at index i
 - `getOrdinate(i, ordinateIndex)` - Get ordinate by index (0=X, 1=Y, 2=Z, 3=M)
 - `setOrdinate(i, ordinateIndex, value)` - Set ordinate value
@@ -920,22 +907,19 @@ console.log('Lifted Z:', lifted.getCoordinates()[0].z); // 115
 - `toCoordinateArray()` - Get all coordinates as array
 - `copy()` - Create deep copy of sequence
 
-**Functional API:**
+Functional API:
 - `wasmts.geom.apply(geometry, filterFn)` - Apply filter to geometry
 
 ## Build System
 
-**Commands:**
 - `npm run build:wasm` - Compile Java to WASM with Maven
 - `npm run build:js` - Copy artifacts to dist/
 - `npm run build` - Full build
-- `node test/test-node.mjs` - Run tests
+- `npm test` - Run tests
 
-**Output:**
+Output:
 - `dist/wasmts.js` - WASM loader (~109KB)
 - `dist/wasmts.js.wasm` - Binary (~5.7MB)
-
-**Build time:** ~25 seconds
 
 ## Technical Notes
 
@@ -959,19 +943,15 @@ Use `<script src="wasmts.js">` not `import()` - the loader needs proper path res
 
 ## License
 
-This project contains and distributes the full source code of **JTS (Java Topology Suite) 1.20.0**, which is dual-licensed under:
+This project contains and distributes JTS (Java Topology Suite) 1.20.0, which is dual-licensed under:
 
-- **Eclipse Public License v2.0** ([LICENSE_EPLv2.txt](LICENSE_EPLv2.txt))
-- **Eclipse Distribution License v1.0** ([LICENSE_EDLv1.txt](LICENSE_EDLv1.txt))
+- [Eclipse Public License v2.0](LICENSE_EPLv2.txt)
+- [Eclipse Distribution License v1.0](LICENSE_EDLv1.txt)
 
 You may use JTS under either license. See the [JTS project](https://github.com/locationtech/jts) for more information.
 
-This project also includes **json-simple 1.1.1** (transitive dependency of jts-io-common), which is licensed under:
+This project also includes json-simple 1.1.1 (transitive dependency of jts-io-common), licensed under [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
-- **Apache License 2.0** ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0))
+The npm distribution includes the GraalVM WebAssembly loader (`wasmts.js`), licensed under GNU General Public License v2.0 with Classpath Exception.
 
-The npm distribution also includes the **GraalVM WebAssembly loader** (the JavaScript runtime code in `wasmts.js`), which is part of GraalVM and is licensed under:
-
-- **GNU General Public License v2.0 with Classpath Exception**
-
-**The wrapper code** (Java interop layer in `java/src/main/java/net/willcohen/wasmts/API.java`) is licensed under EPL-2.0 OR EDL-1.0 to match JTS.
+The wrapper code (`API.java`) is licensed under EPL-2.0 OR EDL-1.0 to match JTS.
