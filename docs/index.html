@@ -273,7 +273,7 @@
             document.querySelectorAll('select').forEach(sel => sel.disabled = false);
 
             if (window._visualizationTools) {
-                status.textContent = 'WasmTS loaded. Visualization ready (EPSG:2249, Boston City Hall).';
+                status.textContent = 'WasmTS loaded. Visualization ready. Coordinates in MA State Plane feet (EPSG:2249) with origin at Boston City Hall.';
             } else if (window._visualizationInitDone) {
                 status.textContent = 'WasmTS loaded. Visualization using SVG fallback.';
             } else {
@@ -338,15 +338,15 @@
             if (geom.geometries) geom.geometries.forEach(g => applyCoords(g, coords, state));
         }
 
-        // Collect Z/M values from GeoJSON coords (call before reprojectStyle strips them)
-        function collectZM(geom) {
+        // Collect coordinate metadata from GeoJSON coords (call before reprojectStyle strips them)
+        function collectCoordMeta(geom) {
             const values = [];
             (function visit(c) {
                 if (typeof c[0] === 'number') {
-                    values.push({ z: c.length >= 3 ? c[2] : null, m: c.length >= 4 ? c[3] : null });
+                    values.push({ x: c[0], y: c[1], z: c.length >= 3 ? c[2] : null, m: c.length >= 4 ? c[3] : null });
                 } else { c.forEach(visit); }
             })(geom.coordinates || []);
-            if (geom.geometries) geom.geometries.forEach(g => values.push(...collectZM(g)));
+            if (geom.geometries) geom.geometries.forEach(g => values.push(...collectCoordMeta(g)));
             return values;
         }
 
@@ -389,6 +389,13 @@
                 }
             }
 
+            // Capture coordinate metadata per group in user-space (subtract origin) before WGS84 transform
+            const coordMetaPerGroup = groupEntries.map(({ gjGeoms }) =>
+                gjGeoms.map(gj => collectCoordMeta(gj).map(m => ({
+                    ...m, x: m.x - originX, y: m.y - originY
+                })))
+            );
+
             // Batch transform EPSG:2249 -> WGS84
             const wgs84 = await toWGS84(allCoords);
 
@@ -399,11 +406,6 @@
                     applyCoords(gj, wgs84, state);
                 }
             }
-
-            // Capture Z/M values per group before reprojectStyle strips them
-            const zmPerGroup = groupEntries.map(({ gjGeoms }) =>
-                gjGeoms.map(gj => collectZM(gj))
-            );
 
             // Build MapLibre style
             const sources = {};
@@ -461,7 +463,7 @@
             }
             const bounds = [[minX, minY], [maxX, maxY]];
 
-            renderMapVisualization(style, bounds, groupEntries, MapGL, zmPerGroup);
+            renderMapVisualization(style, bounds, groupEntries, MapGL, coordMetaPerGroup);
 
             return { style, bounds, _isVisualization: true, _labels: groupEntries.map(e => e.label) };
         }
@@ -498,16 +500,16 @@
             });
         }
 
-        // Add vertex markers with Z/M from pre-reprojection data
-        function addVertexMarkers(style, groupEntries, zmPerGroup) {
+        // Add vertex markers with coordinate metadata from pre-reprojection data
+        function addVertexMarkers(style, groupEntries, coordMetaPerGroup) {
             let globalMinZ = Infinity, globalMaxZ = -Infinity;
             let hasZ = false;
 
-            // Detect Z range from preserved Z/M values
-            if (zmPerGroup) {
-                for (const groupZM of zmPerGroup) {
-                    for (const featureZM of groupZM) {
-                        for (const { z } of featureZM) {
+            // Detect Z range from preserved coordinate metadata
+            if (coordMetaPerGroup) {
+                for (const groupMeta of coordMetaPerGroup) {
+                    for (const featureMeta of groupMeta) {
+                        for (const { z } of featureMeta) {
                             if (z !== null) {
                                 hasZ = true;
                                 if (z < globalMinZ) globalMinZ = z;
@@ -524,11 +526,10 @@
                 if (!src || src.type !== 'geojson') return;
                 const vertexSrcId = srcId + '-vertices';
                 const points = [];
-                const groupZM = zmPerGroup ? zmPerGroup[i] : null;
-                let zmIdx = 0;
+                const groupMeta = coordMetaPerGroup ? coordMetaPerGroup[i] : null;
                 for (let fi = 0; fi < (src.data?.features || []).length; fi++) {
                     const f = src.data.features[fi];
-                    const featureZM = groupZM ? groupZM[fi] : null;
+                    const featureMeta = groupMeta ? groupMeta[fi] : null;
                     let ptIdx = 0;
                     (function extractPts(geom) {
                         if (!geom) return;
@@ -537,8 +538,10 @@
                         (function visit(c) {
                             if (typeof c[0] === 'number') {
                                 const props = {};
-                                if (featureZM && ptIdx < featureZM.length) {
-                                    const { z, m } = featureZM[ptIdx];
+                                if (featureMeta && ptIdx < featureMeta.length) {
+                                    const { x, y, z, m } = featureMeta[ptIdx];
+                                    props.spX = x;
+                                    props.spY = y;
                                     if (z !== null) props.z = z;
                                     if (m !== null) props.m = m;
                                     let label = '';
@@ -578,11 +581,11 @@
             });
         }
 
-        function renderMapVisualization(style, bounds, groupEntries, MapGL, zmPerGroup) {
+        function renderMapVisualization(style, bounds, groupEntries, MapGL, coordMetaPerGroup) {
             visualizationBounds = bounds;
 
             addGroundPlane(style, bounds);
-            addVertexMarkers(style, groupEntries, zmPerGroup);
+            addVertexMarkers(style, groupEntries, coordMetaPerGroup);
 
             const section = document.getElementById('visualizationSection');
             section.style.display = 'block';
@@ -593,7 +596,7 @@
             ).join('');
 
             const info = document.getElementById('visualizationInfo');
-            info.textContent = 'EPSG:2249 (MA State Plane, NAD83, US feet) centered on Boston City Hall. Coordinates are in feet.';
+            info.textContent = 'MA State Plane (EPSG:2249, NAD83, US feet) with origin at Boston City Hall. (0, 0) = City Hall.';
 
             const container = document.getElementById('visualizationMap');
 
@@ -664,8 +667,9 @@
                 let lines = [label];
 
                 if (layerId.endsWith('-vertices')) {
-                    const [lng, lat] = f.geometry.coordinates;
-                    lines.push('x: ' + lng.toFixed(6) + ', y: ' + lat.toFixed(6));
+                    if (props.spX !== undefined && props.spY !== undefined) {
+                        lines.push('x: ' + Number(props.spX).toFixed(1) + ', y: ' + Number(props.spY).toFixed(1));
+                    }
                     if (props.z !== undefined) lines.push('z: ' + props.z);
                     if (props.m !== undefined) lines.push('m: ' + props.m);
                 } else {
