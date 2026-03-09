@@ -120,10 +120,10 @@ function runAllTests() {
     testCoordinateSequenceFilter();
 
     console.log('\n--- Geometry Base Class ---\n');
-    testGeometryBaseClassGaps();
+    testGeometryBaseClass();
 
     console.log('\n--- IntersectionMatrix ---\n');
-    testIntersectionMatrixGaps();
+    testIntersectionMatrix();
 
     testDimension();
 
@@ -138,6 +138,21 @@ function runAllTests() {
 
     console.log('\n--- Geometry Additional Methods ---\n');
     testGeometryAdditionalMethods();
+
+    console.log('\n--- Densifier ---\n');
+    testDensifier();
+
+    console.log('\n--- GeometryFixer ---\n');
+    testGeometryFixer();
+
+    console.log('\n--- CoverageUnion ---\n');
+    testCoverageUnion();
+
+    console.log('\n--- PrecisionModel ---\n');
+    testPrecisionModel();
+
+    console.log('\n--- GeometryPrecisionReducer ---\n');
+    testGeometryPrecisionReducer();
 
     console.log('\n=== All Tests Passed PASS: ===\n');
 }
@@ -1583,7 +1598,7 @@ function testCoordinateSequenceFilter() {
     console.log('PASS: All coordinate sequence filter tests completed');
 }
 
-function testGeometryBaseClassGaps() {
+function testGeometryBaseClass() {
     console.log('Testing getDimension()...');
     const point = wasmts.geom.createPoint(0, 0);
     const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)');
@@ -1647,10 +1662,10 @@ function testGeometryBaseClassGaps() {
     assert(unioned.type === 'Polygon' || unioned.type === 'MultiPolygon', 'union() returns polygon geometry');
     console.log('PASS: union() no-arg');
 
-    console.log('PASS: All Geometry base class gap tests completed');
+    console.log('PASS: All Geometry base class tests completed');
 }
 
-function testIntersectionMatrixGaps() {
+function testIntersectionMatrix() {
     console.log('Testing IntersectionMatrix constructor and basic methods...');
 
     // Get a matrix from relate() first
@@ -1773,7 +1788,7 @@ function testIntersectionMatrixGaps() {
     assert(m1.get(0, 0) === 2, 'add() takes maximum');
     console.log('PASS: add()');
 
-    console.log('PASS: All IntersectionMatrix gap tests completed');
+    console.log('PASS: All IntersectionMatrix tests completed');
 }
 
 async function testDimension() {
@@ -2129,6 +2144,225 @@ function testGeometryAdditionalMethods() {
     console.log('PASS: Geometry.compareTo()');
 
     console.log('PASS: All Geometry Additional Methods tests completed');
+}
+
+function testDensifier() {
+    // Static convenience method
+    const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 0)');
+    const densified = wasmts.densify.Densifier.densify(line, 2.0);
+    assert(densified !== null && densified !== undefined, 'Densified geometry created');
+    assert(densified.type === 'LineString', 'Result is LineString');
+    const coords = densified.getCoordinates();
+    assert(coords.length > 2, 'Densified line has more points than original');
+    console.log('PASS: Static densify - original 2 points, densified', coords.length, 'points');
+
+    // Instance API
+    const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0))');
+    const d = wasmts.densify.Densifier.create(poly);
+    assert(d !== null && d !== undefined, 'Densifier instance created');
+
+    wasmts.densify.Densifier.setDistanceTolerance(d, 25.0);
+    console.log('PASS: Set distance tolerance');
+
+    wasmts.densify.Densifier.setValidate(d, true);
+    console.log('PASS: Set validate');
+
+    const result = wasmts.densify.Densifier.getResultGeometry(d);
+    assert(result !== null && result !== undefined, 'Got result geometry');
+    assert(result.type === 'Polygon', 'Result is Polygon');
+    const resultCoords = result.getCoordinates();
+    const origCoords = poly.getCoordinates();
+    assert(resultCoords.length > origCoords.length, 'Densified polygon has more vertices');
+    console.log('PASS: Instance API - original', origCoords.length, 'points, densified', resultCoords.length, 'points');
+
+    // Densify a polygon for reprojection use case
+    const tile = wasmts.io.WKTReader.read('POLYGON ((0 0, 45 0, 45 45, 0 45, 0 0))');
+    const denseTile = wasmts.densify.Densifier.densify(tile, 5.0);
+    assert(denseTile.getCoordinates().length > tile.getCoordinates().length, 'Tile densified for reprojection');
+    assert(denseTile.isValid(), 'Densified tile is valid');
+    console.log('PASS: Densified tile has', denseTile.getCoordinates().length, 'points (tolerance 5.0)');
+
+    console.log('PASS: All Densifier tests completed');
+}
+
+function testGeometryFixer() {
+    // Static convenience method - fix invalid polygon (bowtie/self-intersecting)
+    const bowtie = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 10, 10 0, 0 10, 0 0))');
+    assert(!bowtie.isValid(), 'Bowtie polygon is invalid');
+    console.log('PASS: Bowtie polygon is invalid as expected');
+
+    const fixed = wasmts.geom.util.GeometryFixer.fix(bowtie);
+    assert(fixed !== null && fixed !== undefined, 'Fixed geometry created');
+    assert(fixed.isValid(), 'Fixed geometry is valid');
+    console.log('PASS: Static fix - result type:', fixed.type, ', valid:', fixed.isValid());
+
+    // Static with keepMulti parameter
+    const fixedKeepMulti = wasmts.geom.util.GeometryFixer.fix(bowtie, true);
+    assert(fixedKeepMulti.isValid(), 'Fixed with keepMulti is valid');
+    console.log('PASS: Static fix with keepMulti=true, type:', fixedKeepMulti.type);
+
+    const fixedNoMulti = wasmts.geom.util.GeometryFixer.fix(bowtie, false);
+    assert(fixedNoMulti.isValid(), 'Fixed without keepMulti is valid');
+    console.log('PASS: Static fix with keepMulti=false, type:', fixedNoMulti.type);
+
+    // Instance API
+    const fixer = wasmts.geom.util.GeometryFixer.create(bowtie);
+    assert(fixer !== null && fixer !== undefined, 'GeometryFixer instance created');
+    console.log('PASS: GeometryFixer instance created');
+
+    wasmts.geom.util.GeometryFixer.setKeepCollapsed(fixer, false);
+    console.log('PASS: Set keepCollapsed');
+
+    wasmts.geom.util.GeometryFixer.setKeepMulti(fixer, true);
+    console.log('PASS: Set keepMulti');
+
+    const instanceResult = wasmts.geom.util.GeometryFixer.getResult(fixer);
+    assert(instanceResult.isValid(), 'Instance result is valid');
+    console.log('PASS: Instance API result type:', instanceResult.type);
+
+    // Fix already valid geometry (should return equivalent)
+    const validPoly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+    const fixedValid = wasmts.geom.util.GeometryFixer.fix(validPoly);
+    assert(fixedValid.isValid(), 'Already valid polygon stays valid');
+    assert(Math.abs(fixedValid.getArea() - validPoly.getArea()) < 0.001, 'Area preserved');
+    console.log('PASS: Valid polygon unchanged after fix');
+
+    console.log('PASS: All GeometryFixer tests completed');
+}
+
+function testCoverageUnion() {
+    // Non-overlapping polygons sharing edges (coverage)
+    const tile1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+    const tile2 = wasmts.io.WKTReader.read('POLYGON ((10 0, 20 0, 20 10, 10 10, 10 0))');
+    const tile3 = wasmts.io.WKTReader.read('POLYGON ((0 10, 10 10, 10 20, 0 20, 0 10))');
+    const tile4 = wasmts.io.WKTReader.read('POLYGON ((10 10, 20 10, 20 20, 10 20, 10 10))');
+
+    console.log('Created 4 adjacent tiles (2x2 grid)');
+
+    const union = wasmts.coverage.CoverageUnion.union([tile1, tile2, tile3, tile4]);
+    assert(union !== null && union !== undefined, 'Coverage union result created');
+    assert(union.isValid(), 'Coverage union is valid');
+
+    const expectedArea = 400;
+    assert(Math.abs(union.getArea() - expectedArea) < 0.001, 'Area equals sum (no overlaps)');
+    console.log('PASS: Coverage union area:', union.getArea(), '(expected', expectedArea, ')');
+    console.log('PASS: Result type:', union.type);
+
+    // Single polygon
+    const single = wasmts.coverage.CoverageUnion.union([tile1]);
+    assert(single.isValid(), 'Single polygon union is valid');
+    assert(Math.abs(single.getArea() - 100) < 0.001, 'Single polygon area preserved');
+    console.log('PASS: Single polygon coverage union works');
+
+    // Two adjacent polygons
+    const pair = wasmts.coverage.CoverageUnion.union([tile1, tile2]);
+    assert(pair.isValid(), 'Pair union is valid');
+    assert(Math.abs(pair.getArea() - 200) < 0.001, 'Pair area correct');
+    console.log('PASS: Two adjacent tiles merged, area:', pair.getArea());
+
+    console.log('PASS: All CoverageUnion tests completed');
+}
+
+function testPrecisionModel() {
+    // Create FLOATING (default)
+    const pmDefault = wasmts.geom.PrecisionModel.create();
+    assert(pmDefault !== null && pmDefault !== undefined, 'Default PrecisionModel created');
+    assert(pmDefault.getType() === 'Floating', 'Default type is Floating');
+    assert(pmDefault.isFloating() === true, 'Default is floating');
+    console.log('PASS: Default PrecisionModel - type:', pmDefault.getType());
+
+    // Create by type name
+    const pmFloat = wasmts.geom.PrecisionModel.create('Floating');
+    assert(pmFloat.getType() === 'Floating', 'Floating type');
+    console.log('PASS: Floating PrecisionModel');
+
+    const pmFloatSingle = wasmts.geom.PrecisionModel.create('Floating-Single');
+    assert(pmFloatSingle.getType() === 'Floating-Single', 'Floating-Single type');
+    console.log('PASS: Floating-Single PrecisionModel');
+
+    // Create FIXED with scale
+    const pmFixed = wasmts.geom.PrecisionModel.createFixed(1000.0);
+    assert(pmFixed.getType() === 'Fixed', 'Fixed type');
+    assert(pmFixed.getScale() === 1000.0, 'Scale is 1000');
+    assert(pmFixed.isFloating() === false, 'Fixed is not floating');
+    console.log('PASS: FIXED PrecisionModel - scale:', pmFixed.getScale());
+
+    // makePrecise
+    const precise = pmFixed.makePrecise(1.23456789);
+    assert(precise === 1.235, 'makePrecise rounds to scale');
+    console.log('PASS: makePrecise(1.23456789) =', precise);
+
+    // getMaximumSignificantDigits
+    const digits = pmFixed.getMaximumSignificantDigits();
+    assert(typeof digits === 'number', 'getMaximumSignificantDigits returns number');
+    console.log('PASS: getMaximumSignificantDigits:', digits);
+
+    // gridSize
+    const grid = pmFixed.gridSize();
+    assert(grid === 0.001, 'Grid size is 1/scale');
+    console.log('PASS: gridSize:', grid);
+
+    // Create with scale via create()
+    const pmScale = wasmts.geom.PrecisionModel.create(100.0);
+    assert(pmScale.getType() === 'Fixed', 'Numeric arg creates Fixed');
+    assert(pmScale.getScale() === 100.0, 'Scale is 100');
+    console.log('PASS: create(100.0) - type:', pmScale.getType(), ', scale:', pmScale.getScale());
+
+    console.log('PASS: All PrecisionModel tests completed');
+}
+
+function testGeometryPrecisionReducer() {
+    // Static reduce
+    const pm = wasmts.geom.PrecisionModel.createFixed(1.0);
+    const poly = wasmts.io.WKTReader.read('POLYGON ((0.1 0.2, 10.7 0.3, 10.8 10.9, 0.4 10.6, 0.1 0.2))');
+
+    const reduced = wasmts.precision.GeometryPrecisionReducer.reduce(poly, pm);
+    assert(reduced !== null && reduced !== undefined, 'Reduced geometry created');
+    assert(reduced.isValid(), 'Reduced geometry is valid');
+    const coords = reduced.getCoordinates();
+    coords.forEach(c => {
+        assert(c.x === Math.round(c.x), 'X is integer: ' + c.x);
+        assert(c.y === Math.round(c.y), 'Y is integer: ' + c.y);
+    });
+    console.log('PASS: Static reduce snapped to integer grid');
+
+    // Static reducePointwise
+    const reducedPw = wasmts.precision.GeometryPrecisionReducer.reducePointwise(poly, pm);
+    assert(reducedPw !== null && reducedPw !== undefined, 'Pointwise reduced geometry created');
+    console.log('PASS: Static reducePointwise');
+
+    // Static reduceKeepCollapsed
+    const reducedKc = wasmts.precision.GeometryPrecisionReducer.reduceKeepCollapsed(poly, pm);
+    assert(reducedKc !== null && reducedKc !== undefined, 'KeepCollapsed reduced geometry created');
+    console.log('PASS: Static reduceKeepCollapsed');
+
+    // Instance API
+    const pm2 = wasmts.geom.PrecisionModel.createFixed(10.0);
+    const reducer = wasmts.precision.GeometryPrecisionReducer.create(pm2);
+    assert(reducer !== null && reducer !== undefined, 'Reducer instance created');
+
+    wasmts.precision.GeometryPrecisionReducer.setChangePrecisionModel(reducer, true);
+    console.log('PASS: setChangePrecisionModel');
+
+    wasmts.precision.GeometryPrecisionReducer.setPointwise(reducer, false);
+    console.log('PASS: setPointwise');
+
+    wasmts.precision.GeometryPrecisionReducer.setRemoveCollapsedComponents(reducer, true);
+    console.log('PASS: setRemoveCollapsedComponents');
+
+    const instanceResult = wasmts.precision.GeometryPrecisionReducer.reduceInstance(reducer, poly);
+    assert(instanceResult !== null && instanceResult !== undefined, 'Instance reduce result created');
+    assert(instanceResult.isValid(), 'Instance reduce result is valid');
+    console.log('PASS: Instance reduce result type:', instanceResult.type);
+
+    // MVT use case: 4096 grid
+    const pm4096 = wasmts.geom.PrecisionModel.createFixed(4096.0);
+    const mvtPoly = wasmts.io.WKTReader.read('POLYGON ((0.00024 0.00049, 0.00268 0.00049, 0.00268 0.00268, 0.00024 0.00268, 0.00024 0.00049))');
+    const snapped = wasmts.precision.GeometryPrecisionReducer.reduce(mvtPoly, pm4096);
+    assert(snapped.isValid(), 'MVT snapped polygon is valid');
+    console.log('PASS: MVT 4096-grid snapping works');
+
+    console.log('PASS: All GeometryPrecisionReducer tests completed');
 }
 
 function assert(condition, message) {

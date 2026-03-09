@@ -1,6 +1,7 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project will be documented in this file. This change
+log follows the conventions of [keepachangelog.com](http://keepachangelog.com/).
 
 ## [Unreleased]
 
@@ -18,6 +19,11 @@ All notable changes to this project will be documented in this file.
 - MinimumDiameter: `getLength()` returns the minimum width
 - CoordinateSequence wrapper: `getX(i)`, `getY(i)`, `getZ(i)`, `getM(i)`, `getOrdinate(i, ord)`, `setOrdinate(i, ord, value)`, `getDimension()`, `getMeasures()`, `hasZ()`, `hasM()`, `size()`, `getCoordinate(i)`, `toCoordinateArray()`, `copy()`
 - CoordinateSequenceFilter: `geometry.apply(filter)` - filter receives `(seq, i)` matching JTS pattern
+- Densifier: `densify(geom, tolerance)` static method and instance API (`create`, `setDistanceTolerance`, `setValidate`, `getResultGeometry`)
+- GeometryFixer: `fix(geom)`, `fix(geom, isKeepMulti)` static methods and instance API (`create`, `setKeepCollapsed`, `setKeepMulti`, `getResult`)
+- CoverageUnion: `union(geometries)` for fast union of non-overlapping adjacent polygons
+- PrecisionModel: `create()`, `create(type)`, `createFixed(scale)`, `getType()`, `getScale()`, `isFloating()`, `makePrecise()`, `getMaximumSignificantDigits()`, `gridSize()`
+- GeometryPrecisionReducer: `reduce(geom, pm)`, `reduceKeepCollapsed()`, `reducePointwise()` static methods and instance API (`create`, `setChangePrecisionModel`, `setPointwise`, `setRemoveCollapsedComponents`, `reduceInstance`)
 
 ### Changed
 
@@ -45,3 +51,7 @@ Proof of concept: JTS Topology Suite 1.20.0 compiled to WebAssembly using GraalV
 - Object-oriented and functional JavaScript APIs
 - Browser and Node.js compatible
 - Interactive demo with Monaco editor
+
+[Unreleased]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha3...HEAD
+[0.1.0-alpha3]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha2...0.1.0-alpha3
+[0.1.0-alpha2]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha1...0.1.0-alpha2

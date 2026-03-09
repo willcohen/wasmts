@@ -43,6 +43,10 @@ import org.locationtech.jts.operation.buffer.OffsetCurveBuilder;
 import org.locationtech.jts.operation.linemerge.LineMerger;
 import org.locationtech.jts.operation.union.CascadedPolygonUnion;
 import org.locationtech.jts.operation.distance.DistanceOp;
+import org.locationtech.jts.densify.Densifier;
+import org.locationtech.jts.geom.util.GeometryFixer;
+import org.locationtech.jts.coverage.CoverageUnion;
+import org.locationtech.jts.precision.GeometryPrecisionReducer;
 import java.util.List;
 import java.util.Collection;
 import java.util.ArrayList;
@@ -582,6 +586,116 @@ public class API {
     }
 
     @FunctionalInterface
+    interface DensifierDensifyFn {
+        Object densify(Object geom, Object tolerance);
+    }
+
+    @FunctionalInterface
+    interface DensifierCreateFn {
+        Object create(Object geom);
+    }
+
+    @FunctionalInterface
+    interface DensifierSetDistanceToleranceFn {
+        void setDistanceTolerance(Object densifier, Object tolerance);
+    }
+
+    @FunctionalInterface
+    interface DensifierSetValidateFn {
+        void setValidate(Object densifier, Object isValidated);
+    }
+
+    @FunctionalInterface
+    interface DensifierGetResultGeometryFn {
+        Object getResultGeometry(Object densifier);
+    }
+
+    @FunctionalInterface
+    interface GeometryFixerFixFn {
+        Object fix(Object geom, Object isKeepMulti);
+    }
+
+    @FunctionalInterface
+    interface GeometryFixerCreateFn {
+        Object create(Object geom);
+    }
+
+    @FunctionalInterface
+    interface GeometryFixerSetKeepCollapsedFn {
+        void setKeepCollapsed(Object fixer, Object val);
+    }
+
+    @FunctionalInterface
+    interface GeometryFixerSetKeepMultiFn {
+        void setKeepMulti(Object fixer, Object val);
+    }
+
+    @FunctionalInterface
+    interface GeometryFixerGetResultFn {
+        Object getResult(Object fixer);
+    }
+
+    @FunctionalInterface
+    interface CoverageUnionFn {
+        Object union(Object geometries);
+    }
+
+    @FunctionalInterface
+    interface PrecisionModelCreateFn {
+        Object create(Object typeOrScale);
+    }
+
+    @FunctionalInterface
+    interface PrecisionModelCreateFixedFn {
+        Object createFixed(Object scale);
+    }
+
+    @FunctionalInterface
+    interface PrecisionModelGetScaleFn {
+        Object getScale(Object pm);
+    }
+
+    @FunctionalInterface
+    interface PrecisionModelIsFloatingFn {
+        Object isFloating(Object pm);
+    }
+
+    @FunctionalInterface
+    interface PrecisionModelMakePreciseFn {
+        Object makePrecise(Object pm, Object val);
+    }
+
+    @FunctionalInterface
+    interface PrecisionModelGetMaxSigDigitsFn {
+        Object getMaximumSignificantDigits(Object pm);
+    }
+
+    @FunctionalInterface
+    interface PrecisionModelGridSizeFn {
+        Object gridSize(Object pm);
+    }
+
+    @FunctionalInterface
+    interface GPRReduceStaticFn {
+        Object reduce(Object geom, Object pm);
+    }
+
+    @FunctionalInterface
+    interface GPRCreateFn {
+        Object create(Object pm);
+    }
+
+    @FunctionalInterface
+    interface GPRSetBooleanFn {
+        void set(Object reducer, Object val);
+    }
+
+    @FunctionalInterface
+    interface GPRReduceInstanceFn {
+        Object reduce(Object reducer, Object geom);
+    }
+
+    @FunctionalInterface
     interface EqualsTopoFn {
         Object equalsTopo(Object g1, Object g2);
     }
@@ -1012,6 +1126,15 @@ public class API {
         wasmts.operation.buffer = wasmts.operation.buffer || {};
         wasmts.operation.linemerge = wasmts.operation.linemerge || {};
         wasmts.operation.union = wasmts.operation.union || {};
+        wasmts.densify = wasmts.densify || {};
+        wasmts.densify.Densifier = wasmts.densify.Densifier || {};
+        wasmts.geom.util = wasmts.geom.util || {};
+        wasmts.geom.util.GeometryFixer = wasmts.geom.util.GeometryFixer || {};
+        wasmts.coverage = wasmts.coverage || {};
+        wasmts.coverage.CoverageUnion = wasmts.coverage.CoverageUnion || {};
+        wasmts.geom.PrecisionModel = wasmts.geom.PrecisionModel || {};
+        wasmts.precision = wasmts.precision || {};
+        wasmts.precision.GeometryPrecisionReducer = wasmts.precision.GeometryPrecisionReducer || {};
     """)
     private static native void initializeNamespaces();
 
@@ -1761,6 +1884,117 @@ public class API {
     @JS.Coerce
     @JS("wasmts.operation.union.CascadedPolygonUnion = wasmts.operation.union.CascadedPolygonUnion || {}; wasmts.operation.union.CascadedPolygonUnion.union = (geometries) => fn.union(geometries);")
     private static native void exportCascadedPolygonUnion(CascadedPolygonUnionFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.densify.Densifier.densify = (geom, tolerance) => fn.densify(geom, tolerance);")
+    private static native void exportDensifierDensify(DensifierDensifyFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.densify.Densifier.create = (geom) => fn.create(geom);")
+    private static native void exportDensifierCreate(DensifierCreateFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.densify.Densifier.setDistanceTolerance = (d, tolerance) => fn.setDistanceTolerance(d, tolerance);")
+    private static native void exportDensifierSetDistanceTolerance(DensifierSetDistanceToleranceFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.densify.Densifier.setValidate = (d, isValidated) => fn.setValidate(d, isValidated);")
+    private static native void exportDensifierSetValidate(DensifierSetValidateFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.densify.Densifier.getResultGeometry = (d) => fn.getResultGeometry(d);")
+    private static native void exportDensifierGetResultGeometry(DensifierGetResultGeometryFn fn);
+
+    @JS.Coerce
+    @JS("""
+        wasmts.geom.util.GeometryFixer.fix = (geom, isKeepMulti) => fn.fix(geom, isKeepMulti);
+    """)
+    private static native void exportGeometryFixerFix(GeometryFixerFixFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.util.GeometryFixer.create = (geom) => fn.create(geom);")
+    private static native void exportGeometryFixerCreate(GeometryFixerCreateFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.util.GeometryFixer.setKeepCollapsed = (fixer, val) => fn.setKeepCollapsed(fixer, val);")
+    private static native void exportGeometryFixerSetKeepCollapsed(GeometryFixerSetKeepCollapsedFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.util.GeometryFixer.setKeepMulti = (fixer, val) => fn.setKeepMulti(fixer, val);")
+    private static native void exportGeometryFixerSetKeepMulti(GeometryFixerSetKeepMultiFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.util.GeometryFixer.getResult = (fixer) => fn.getResult(fixer);")
+    private static native void exportGeometryFixerGetResult(GeometryFixerGetResultFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.coverage.CoverageUnion.union = (geometries) => fn.union(geometries);")
+    private static native void exportCoverageUnion2(CoverageUnionFn fn);
+
+    // PrecisionModel creation
+    @JS.Coerce
+    @JS("""
+        wasmts.geom.PrecisionModel.create = (type) => fn.create(type);
+    """)
+    private static native void exportPrecisionModelCreate(PrecisionModelCreateFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.PrecisionModel.createFixed = (scale) => fn.createFixed(scale);")
+    private static native void exportPrecisionModelCreateFixed(PrecisionModelCreateFixedFn fn);
+
+    // PrecisionModel instance method exports
+    @JS.Coerce
+    @JS("wasmts.geom.precisionModelGetScale = (pm) => fn.getScale(pm);")
+    private static native void exportPrecisionModelGetScale(PrecisionModelGetScaleFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.precisionModelIsFloating = (pm) => fn.isFloating(pm);")
+    private static native void exportPrecisionModelIsFloating(PrecisionModelIsFloatingFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.precisionModelMakePrecise = (pm, val) => fn.makePrecise(pm, val);")
+    private static native void exportPrecisionModelMakePrecise(PrecisionModelMakePreciseFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.precisionModelGetMaximumSignificantDigits = (pm) => fn.getMaximumSignificantDigits(pm);")
+    private static native void exportPrecisionModelGetMaxSigDigits(PrecisionModelGetMaxSigDigitsFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.precisionModelGridSize = (pm) => fn.gridSize(pm);")
+    private static native void exportPrecisionModelGridSize(PrecisionModelGridSizeFn fn);
+
+    // GeometryPrecisionReducer exports
+    @JS.Coerce
+    @JS("wasmts.precision.GeometryPrecisionReducer.reduce = (geom, pm) => fn.reduce(geom, pm);")
+    private static native void exportGPRReduce(GPRReduceStaticFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.precision.GeometryPrecisionReducer.reduceKeepCollapsed = (geom, pm) => fn.reduce(geom, pm);")
+    private static native void exportGPRReduceKeepCollapsed(GPRReduceStaticFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.precision.GeometryPrecisionReducer.reducePointwise = (geom, pm) => fn.reduce(geom, pm);")
+    private static native void exportGPRReducePointwise(GPRReduceStaticFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.precision.GeometryPrecisionReducer.create = (pm) => fn.create(pm);")
+    private static native void exportGPRCreate(GPRCreateFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.precision.GeometryPrecisionReducer.setChangePrecisionModel = (r, val) => fn.set(r, val);")
+    private static native void exportGPRSetChangePrecisionModel(GPRSetBooleanFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.precision.GeometryPrecisionReducer.setPointwise = (r, val) => fn.set(r, val);")
+    private static native void exportGPRSetPointwise(GPRSetBooleanFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.precision.GeometryPrecisionReducer.setRemoveCollapsedComponents = (r, val) => fn.set(r, val);")
+    private static native void exportGPRSetRemoveCollapsed(GPRSetBooleanFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.precision.GeometryPrecisionReducer.reduceInstance = (r, geom) => fn.reduce(r, geom);")
+    private static native void exportGPRReduceInstance(GPRReduceInstanceFn fn);
 
     // Helper to create JavaScript geometry object with instance methods
     // Only includes methods that exist on JTS Geometry class
@@ -3227,6 +3461,191 @@ public class API {
         return createJSGeometry(JSString.of(result.getGeometryType()), result);
     }
 
+    private static Object densifierDensifyJS(Object geom, Object tolerance) {
+        Geometry g = extractGeometry(geom);
+        double tol = ((JSValue) tolerance).asDouble();
+        Geometry result = Densifier.densify(g, tol);
+        return createJSGeometry(JSString.of(result.getGeometryType()), result);
+    }
+
+    private static Object densifierCreateJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        Densifier d = new Densifier(g);
+        return d;
+    }
+
+    private static void densifierSetDistanceToleranceJS(Object densifier, Object tolerance) {
+        Densifier d = (Densifier) densifier;
+        double tol = ((JSValue) tolerance).asDouble();
+        d.setDistanceTolerance(tol);
+    }
+
+    private static void densifierSetValidateJS(Object densifier, Object isValidated) {
+        Densifier d = (Densifier) densifier;
+        boolean val = ((JSValue) isValidated).asBoolean();
+        d.setValidate(val);
+    }
+
+    private static Object densifierGetResultGeometryJS(Object densifier) {
+        Densifier d = (Densifier) densifier;
+        Geometry result = d.getResultGeometry();
+        return createJSGeometry(JSString.of(result.getGeometryType()), result);
+    }
+
+    private static Object geometryFixerFixJS(Object geom, Object isKeepMulti) {
+        Geometry g = extractGeometry(geom);
+        Geometry result;
+        if (isKeepMulti != null && !(isKeepMulti instanceof JSValue && ((JSValue) isKeepMulti).isUndefined())) {
+            boolean keepMulti = ((JSValue) isKeepMulti).asBoolean();
+            result = GeometryFixer.fix(g, keepMulti);
+        } else {
+            result = GeometryFixer.fix(g);
+        }
+        return createJSGeometry(JSString.of(result.getGeometryType()), result);
+    }
+
+    private static Object geometryFixerCreateJS(Object geom) {
+        Geometry g = extractGeometry(geom);
+        GeometryFixer fixer = new GeometryFixer(g);
+        return fixer;
+    }
+
+    private static void geometryFixerSetKeepCollapsedJS(Object fixer, Object val) {
+        GeometryFixer f = (GeometryFixer) fixer;
+        boolean v = ((JSValue) val).asBoolean();
+        f.setKeepCollapsed(v);
+    }
+
+    private static void geometryFixerSetKeepMultiJS(Object fixer, Object val) {
+        GeometryFixer f = (GeometryFixer) fixer;
+        boolean v = ((JSValue) val).asBoolean();
+        f.setKeepMulti(v);
+    }
+
+    private static Object geometryFixerGetResultJS(Object fixer) {
+        GeometryFixer f = (GeometryFixer) fixer;
+        Geometry result = f.getResult();
+        return createJSGeometry(JSString.of(result.getGeometryType()), result);
+    }
+
+    private static Object coverageUnionJS(Object geometriesArray) {
+        int length = getJSArrayLength(geometriesArray).asInt();
+        Geometry[] geometries = new Geometry[length];
+        for (int i = 0; i < length; i++) {
+            Object item = getJSArrayElement(geometriesArray, i);
+            geometries[i] = extractGeometry(item);
+        }
+        Geometry result = CoverageUnion.union(geometries);
+        return createJSGeometry(JSString.of(result.getGeometryType()), result);
+    }
+
+    private static Object precisionModelCreateJS(Object typeOrScale) {
+        PrecisionModel pm;
+        if (typeOrScale == null || (typeOrScale instanceof JSValue && ((JSValue) typeOrScale).isUndefined())) {
+            pm = new PrecisionModel();
+        } else if (typeOrScale instanceof JSString) {
+            String typeStr = ((JSString) typeOrScale).asString();
+            switch (typeStr) {
+                case "FLOATING": case "Floating":
+                    pm = new PrecisionModel(PrecisionModel.FLOATING); break;
+                case "FLOATING_SINGLE": case "Floating-Single":
+                    pm = new PrecisionModel(PrecisionModel.FLOATING_SINGLE); break;
+                case "FIXED": case "Fixed":
+                    pm = new PrecisionModel(PrecisionModel.FIXED); break;
+                default: pm = new PrecisionModel(); break;
+            }
+        } else if (typeOrScale instanceof JSValue) {
+            pm = new PrecisionModel(((JSValue) typeOrScale).asDouble());
+        } else {
+            pm = new PrecisionModel();
+        }
+        return createJSPrecisionModel(pm);
+    }
+
+    private static Object precisionModelCreateFixedJS(Object scale) {
+        double s = ((JSValue) scale).asDouble();
+        PrecisionModel pm = new PrecisionModel(s);
+        return createJSPrecisionModel(pm);
+    }
+
+    private static Object precisionModelGetScaleJS(Object pm) {
+        PrecisionModel model = extractPrecisionModel(pm);
+        return JSNumber.of(model.getScale());
+    }
+
+    private static Object precisionModelIsFloatingJS(Object pm) {
+        PrecisionModel model = extractPrecisionModel(pm);
+        return JSBoolean.of(model.isFloating());
+    }
+
+    private static Object precisionModelMakePreciseJS(Object pm, Object val) {
+        PrecisionModel model = extractPrecisionModel(pm);
+        double v = ((JSValue) val).asDouble();
+        return JSNumber.of(model.makePrecise(v));
+    }
+
+    private static Object precisionModelGetMaxSigDigitsJS(Object pm) {
+        PrecisionModel model = extractPrecisionModel(pm);
+        return JSNumber.of(model.getMaximumSignificantDigits());
+    }
+
+    private static Object precisionModelGridSizeJS(Object pm) {
+        PrecisionModel model = extractPrecisionModel(pm);
+        return JSNumber.of(model.gridSize());
+    }
+
+    private static Object gprReduceStaticJS(Object geom, Object pm) {
+        Geometry g = extractGeometry(geom);
+        PrecisionModel model = extractPrecisionModel(pm);
+        Geometry result = GeometryPrecisionReducer.reduce(g, model);
+        return createJSGeometry(JSString.of(result.getGeometryType()), result);
+    }
+
+    private static Object gprReduceKeepCollapsedJS(Object geom, Object pm) {
+        Geometry g = extractGeometry(geom);
+        PrecisionModel model = extractPrecisionModel(pm);
+        Geometry result = GeometryPrecisionReducer.reduceKeepCollapsed(g, model);
+        return createJSGeometry(JSString.of(result.getGeometryType()), result);
+    }
+
+    private static Object gprReducePointwiseJS(Object geom, Object pm) {
+        Geometry g = extractGeometry(geom);
+        PrecisionModel model = extractPrecisionModel(pm);
+        Geometry result = GeometryPrecisionReducer.reducePointwise(g, model);
+        return createJSGeometry(JSString.of(result.getGeometryType()), result);
+    }
+
+    private static Object gprCreateJS(Object pm) {
+        PrecisionModel model = extractPrecisionModel(pm);
+        GeometryPrecisionReducer reducer = new GeometryPrecisionReducer(model);
+        return reducer;
+    }
+
+    private static void gprSetChangePrecisionModelJS(Object reducer, Object val) {
+        GeometryPrecisionReducer r = (GeometryPrecisionReducer) reducer;
+        boolean v = ((JSValue) val).asBoolean();
+        r.setChangePrecisionModel(v);
+    }
+
+    private static void gprSetPointwiseJS(Object reducer, Object val) {
+        GeometryPrecisionReducer r = (GeometryPrecisionReducer) reducer;
+        boolean v = ((JSValue) val).asBoolean();
+        r.setPointwise(v);
+    }
+
+    private static void gprSetRemoveCollapsedJS(Object reducer, Object val) {
+        GeometryPrecisionReducer r = (GeometryPrecisionReducer) reducer;
+        boolean v = ((JSValue) val).asBoolean();
+        r.setRemoveCollapsedComponents(v);
+    }
+
+    private static Object gprReduceInstanceJS(Object reducer, Object geom) {
+        GeometryPrecisionReducer r = (GeometryPrecisionReducer) reducer;
+        Geometry g = extractGeometry(geom);
+        Geometry result = r.reduce(g);
+        return createJSGeometry(JSString.of(result.getGeometryType()), result);
+    }
+
     private static Object equalsTopoJS(Object geom1, Object geom2) {
         Geometry g1 = extractGeometry(geom1);
         Geometry g2 = extractGeometry(geom2);
@@ -3313,6 +3732,11 @@ public class API {
     @JS("""
         const pm = { _jtsPrecisionModel: precisionModel };
         pm.getType = () => wasmts.geom.precisionModelGetType(pm);
+        pm.getScale = () => wasmts.geom.precisionModelGetScale(pm);
+        pm.isFloating = () => wasmts.geom.precisionModelIsFloating(pm);
+        pm.makePrecise = (val) => wasmts.geom.precisionModelMakePrecise(pm, val);
+        pm.getMaximumSignificantDigits = () => wasmts.geom.precisionModelGetMaximumSignificantDigits(pm);
+        pm.gridSize = () => wasmts.geom.precisionModelGridSize(pm);
         return pm;
         """)
     private static native JSObject createJSPrecisionModel(PrecisionModel precisionModel);
@@ -3327,8 +3751,13 @@ public class API {
 
     private static Object precisionModelGetTypeJS(Object pm) {
         PrecisionModel model = extractPrecisionModel(pm);
-        PrecisionModel.Type type = model.getType();
-        return JSString.of(type.toString());
+        String typeStr = model.getType().toString();
+        return JSString.of(switch (typeStr) {
+            case "FLOATING" -> "Floating";
+            case "FLOATING SINGLE" -> "Floating-Single";
+            case "FIXED" -> "Fixed";
+            default -> typeStr;
+        });
     }
 
     @JS("""
@@ -4178,6 +4607,42 @@ public class API {
 
         // Export CascadedPolygonUnion
         exportCascadedPolygonUnion(API::cascadedPolygonUnionJS);
+
+        // Export Densifier
+        exportDensifierDensify(API::densifierDensifyJS);
+        exportDensifierCreate(API::densifierCreateJS);
+        exportDensifierSetDistanceTolerance(API::densifierSetDistanceToleranceJS);
+        exportDensifierSetValidate(API::densifierSetValidateJS);
+        exportDensifierGetResultGeometry(API::densifierGetResultGeometryJS);
+
+        // Export GeometryFixer
+        exportGeometryFixerFix(API::geometryFixerFixJS);
+        exportGeometryFixerCreate(API::geometryFixerCreateJS);
+        exportGeometryFixerSetKeepCollapsed(API::geometryFixerSetKeepCollapsedJS);
+        exportGeometryFixerSetKeepMulti(API::geometryFixerSetKeepMultiJS);
+        exportGeometryFixerGetResult(API::geometryFixerGetResultJS);
+
+        // Export CoverageUnion
+        exportCoverageUnion2(API::coverageUnionJS);
+
+        // Export PrecisionModel creation
+        exportPrecisionModelCreate(API::precisionModelCreateJS);
+        exportPrecisionModelCreateFixed(API::precisionModelCreateFixedJS);
+        exportPrecisionModelGetScale(API::precisionModelGetScaleJS);
+        exportPrecisionModelIsFloating(API::precisionModelIsFloatingJS);
+        exportPrecisionModelMakePrecise(API::precisionModelMakePreciseJS);
+        exportPrecisionModelGetMaxSigDigits(API::precisionModelGetMaxSigDigitsJS);
+        exportPrecisionModelGridSize(API::precisionModelGridSizeJS);
+
+        // Export GeometryPrecisionReducer
+        exportGPRReduce(API::gprReduceStaticJS);
+        exportGPRReduceKeepCollapsed(API::gprReduceKeepCollapsedJS);
+        exportGPRReducePointwise(API::gprReducePointwiseJS);
+        exportGPRCreate(API::gprCreateJS);
+        exportGPRSetChangePrecisionModel(API::gprSetChangePrecisionModelJS);
+        exportGPRSetPointwise(API::gprSetPointwiseJS);
+        exportGPRSetRemoveCollapsed(API::gprSetRemoveCollapsedJS);
+        exportGPRReduceInstance(API::gprReduceInstanceJS);
 
         System.out.println("\nWasmTS API exported to JavaScript!");
     }

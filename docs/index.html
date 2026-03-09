@@ -157,6 +157,16 @@
                 <option value="polyaccessors">Polygon Accessors (Rings & Holes)</option>
                 <option value="distance">Distance Operations (nearest points)</option>
                 <option value="factory">Geometry Factory (create from coords)</option>
+                <option value="spatialrelate">Spatial Relationships (DE-9IM)</option>
+                <option value="envelope">Envelope Operations</option>
+                <option value="linestring">LineString / LinearRing Methods</option>
+                <option value="coordsequence">CoordinateSequence & Filters</option>
+                <option value="densifier">Densifier</option>
+                <option value="geometryfixer">GeometryFixer</option>
+                <option value="coverageunion">CoverageUnion</option>
+                <option value="precisionmodel">PrecisionModel</option>
+                <option value="precisionreducer">GeometryPrecisionReducer</option>
+                <option value="dimension">Dimension Constants</option>
             </select>
         </div>
         <div id="replOutput"></div>
@@ -167,7 +177,7 @@
 
     <!-- Load the WASM module as a regular script -->
     <!-- Using <script src> ensures document.currentScript points to wasmts.js -->
-    <script src="https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha2/dist/wasmts.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha3/dist/wasmts.js"></script>
     <!-- For local development, use: -->
     <!-- <script src="../dist/wasmts.js"></script> -->
 
@@ -389,6 +399,44 @@ console.log('Self-intersecting line.isSimple():', selfIntersecting.isSimple());
 console.log('\\n=== User Data ===');
 poly1.setUserData({ id: 123, name: 'Test' });
 console.log('User data:', poly1.getUserData());
+
+// === EQUALITY & COMPARISON ===
+console.log('\\n=== Equality & Comparison ===');
+const polyA = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const polyB = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const polyC = wasmts.io.WKTReader.read('POLYGON ((0 0, 10.001 0, 10 10, 0 10, 0 0))');
+console.log('equalsExact (identical):', polyA.equalsExact(polyB, 0));
+console.log('equalsExact (tolerance 0):', polyA.equalsExact(polyC, 0));
+console.log('equalsExact (tolerance 0.01):', polyA.equalsExact(polyC, 0.01));
+console.log('equalsNorm:', polyA.equalsNorm(polyB));
+
+const nearPt = wasmts.geom.createPoint(5, 5);
+const farPt = wasmts.geom.createPoint(100, 100);
+console.log('isWithinDistance(inside, 1):', nearPt.isWithinDistance(polyA, 1));
+console.log('isWithinDistance(far, 10):', farPt.isWithinDistance(polyA, 10));
+
+// === SRID ===
+console.log('\\n=== SRID ===');
+console.log('Default SRID:', polyA.getSRID());
+polyA.setSRID(4326);
+console.log('After setSRID(4326):', polyA.getSRID());
+
+// === NORMALIZATION & COMPARISON ===
+console.log('\\n=== Normalization & Comparison ===');
+const unnorm = wasmts.io.WKTReader.read('POLYGON ((10 10, 10 0, 0 0, 0 10, 10 10))');
+const normResult = unnorm.norm();
+console.log('compareTo (same geom):', polyA.compareTo(polyB));
+console.log('norm() returns normalized copy');
+
+// === COORDINATE & FACTORY ===
+console.log('\\n=== Coordinate & Factory ===');
+const testLine = wasmts.io.WKTReader.read('LINESTRING (5 10, 20 30, 40 50)');
+const firstCoord = testLine.getCoordinate();
+console.log('First coordinate: x=' + firstCoord.x + ', y=' + firstCoord.y);
+const fac = testLine.getFactory();
+console.log('Factory:', fac);
+const facPoint = fac.createPoint(99, 88);
+console.log('Point from factory:', facPoint.getCoordinates()[0]);
 
 union`,
 
@@ -825,6 +873,37 @@ console.log('MultiPolygon area:', multiPoly.getArea());
 const gc = wasmts.io.GeoJSONReader.read('{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[0,0]},{"type":"LineString","coordinates":[[0,0],[10,10]]}]}');
 console.log('GeometryCollection type:', gc.type);
 
+console.log('\\n=== GeoJSON Writer Instance API ===');
+
+// Instance writer with configuration
+const writer = wasmts.io.GeoJSONWriter.create();
+const square = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+
+// Default includes CRS
+const withCRS = writer.write(square);
+console.log('With CRS:', withCRS.substring(0, 80) + '...');
+
+// Disable CRS output
+writer.setEncodeCRS(false);
+const noCRS = writer.write(square);
+console.log('Without CRS:', noCRS);
+
+// Control coordinate winding order (RFC 7946 requires CCW)
+writer.setForceCCW(true);
+console.log('Force CCW:', writer.write(square));
+
+// Writer with limited decimal places
+const shortWriter = wasmts.io.GeoJSONWriter.createWithDecimals(2);
+shortWriter.setEncodeCRS(false);
+const smallCircle = wasmts.geom.createPoint(0, 0).buffer(5);
+console.log('\\n2-decimal GeoJSON:', shortWriter.write(smallCircle).substring(0, 100) + '...');
+
+console.log('\\n=== GeoJSON Reader Instance API ===');
+
+const reader = wasmts.io.GeoJSONReader.create();
+const readGeom = reader.read('{"type":"Point","coordinates":[5.123,10.456]}');
+console.log('Read point:', readGeom.getCoordinates()[0]);
+
 poly`,
 
             polyaccessors: `// Polygon Accessors - Access Exterior Ring and Interior Holes
@@ -1064,7 +1143,318 @@ const shell3D = [
 const poly3D = wasmts.geom.createPolygon(shell3D);
 console.log('3D polygon Z:', poly3D.getCoordinates()[0].z);
 
-polygon`
+polygon`,
+
+spatialrelate: `// Spatial Relationships - DE-9IM via relate()
+// The relate() method returns an IntersectionMatrix describing
+// how two geometries interact at their interiors, boundaries, and exteriors
+
+const polygon = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const insidePoint = wasmts.geom.createPoint(5, 5);
+const outsidePoint = wasmts.geom.createPoint(20, 20);
+const edgePoint = wasmts.geom.createPoint(0, 5);
+
+// Get full IntersectionMatrix
+const matrix = polygon.relate(insidePoint);
+console.log('DE-9IM matrix:', matrix.toString());
+console.log('');
+
+// Query the matrix
+console.log('Contains?', matrix.isContains());
+console.log('Intersects?', matrix.isIntersects());
+console.log('Disjoint?', matrix.isDisjoint());
+console.log('');
+
+// Pattern matching (T*****FF* = contains)
+console.log('Matches contains pattern?', polygon.relate(insidePoint, 'T*****FF*'));
+console.log('Matches for outside?', polygon.relate(outsidePoint, 'T*****FF*'));
+console.log('');
+
+// Construct and manipulate matrices directly
+const custom = new wasmts.geom.IntersectionMatrix('T*F**FFF*');
+console.log('Custom matrix:', custom.toString());
+console.log('Matches T********?', custom.matches('T********'));
+console.log('');
+
+// Transpose swaps row/column (A-B becomes B-A perspective)
+const transposed = matrix.transpose();
+console.log('Transposed:', transposed.toString());
+
+polygon`,
+
+envelope: `// Envelope - Bounding box operations
+// Create, query, expand, and combine bounding boxes
+
+const env = wasmts.geom.createEnvelope(0, 10, 0, 20);
+console.log('Envelope: [' + env.getMinX() + ',' + env.getMaxX() + '] x [' + env.getMinY() + ',' + env.getMaxY() + ']');
+console.log('Width:', env.getWidth(), 'Height:', env.getHeight());
+console.log('Area:', env.getArea());
+console.log('Centre:', JSON.stringify(env.centre()));
+console.log('');
+
+// Expand uniformly
+const expanded = wasmts.geom.createEnvelope(0, 10, 0, 20);
+expanded.expandBy(5);
+console.log('After expandBy(5): [' + expanded.getMinX() + ',' + expanded.getMaxX() + '] x [' + expanded.getMinY() + ',' + expanded.getMaxY() + ']');
+console.log('');
+
+// Intersection of two envelopes
+const env1 = wasmts.geom.createEnvelope(0, 10, 0, 10);
+const env2 = wasmts.geom.createEnvelope(5, 15, 5, 15);
+const inter = env1.intersection(env2);
+console.log('Intersection: [' + inter.getMinX() + ',' + inter.getMaxX() + '] x [' + inter.getMinY() + ',' + inter.getMaxY() + ']');
+console.log('');
+
+// Coverage and distance tests
+console.log('env covers (5,5)?', env.covers({ x: 5, y: 5 }));
+console.log('env covers (100,100)?', env.covers({ x: 100, y: 100 }));
+
+const far = wasmts.geom.createEnvelope(20, 30, 0, 10);
+console.log('Distance to far envelope:', env1.distance(far));
+
+// Translate
+const shifted = wasmts.geom.createEnvelope(0, 10, 0, 10);
+shifted.translate(100, 200);
+console.log('Translated: [' + shifted.getMinX() + ',' + shifted.getMaxX() + '] x [' + shifted.getMinY() + ',' + shifted.getMaxY() + ']');
+
+env`,
+
+linestring: `// LineString / LinearRing Methods
+// Access individual points, check closure and ring status
+
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 5 5, 10 0, 15 5)');
+const ring = wasmts.io.WKTReader.read('LINEARRING (0 0, 10 0, 10 10, 0 10, 0 0)');
+
+// Point access
+console.log('Start point:', line.getStartPoint().getX(), line.getStartPoint().getY());
+console.log('End point:', line.getEndPoint().getX(), line.getEndPoint().getY());
+console.log('Point at index 2:', line.getPointN(2).getX(), line.getPointN(2).getY());
+console.log('');
+
+// Closure and ring tests
+console.log('Line is closed?', line.isClosed());
+console.log('Line is ring?', line.isRing());
+console.log('Ring is closed?', ring.isClosed());
+console.log('Ring is ring?', ring.isRing());
+console.log('');
+
+// A figure-8 is closed but not a ring (self-intersecting)
+const fig8 = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10, 10 0, 0 10, 0 0)');
+console.log('Figure-8 closed?', fig8.isClosed());
+console.log('Figure-8 is ring?', fig8.isRing(), '(self-intersecting)');
+console.log('');
+
+// CoordinateSequence access
+const seq = line.getCoordinateSequence();
+console.log('CoordinateSequence size:', seq.size());
+console.log('Dimension:', seq.getDimension());
+for (let i = 0; i < seq.size(); i++) {
+    console.log('  [' + i + '] x=' + seq.getX(i) + ' y=' + seq.getY(i));
+}
+
+line`,
+
+coordsequence: `// CoordinateSequence & Filters
+// Access raw coordinates and transform geometries via apply()
+
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+console.log('Original:', wasmts.io.WKTWriter.write(poly));
+console.log('');
+
+// Translate by (100, 50) using coordinate filter
+const translated = poly.apply((seq, i) => {
+    seq.setOrdinate(i, 0, seq.getX(i) + 100);
+    seq.setOrdinate(i, 1, seq.getY(i) + 50);
+});
+console.log('Translated:', wasmts.io.WKTWriter.write(translated));
+console.log('Original unchanged:', wasmts.io.WKTWriter.write(poly));
+console.log('');
+
+// Scale by 2x
+const scaled = poly.apply((seq, i) => {
+    seq.setOrdinate(i, 0, seq.getX(i) * 2);
+    seq.setOrdinate(i, 1, seq.getY(i) * 2);
+});
+console.log('Scaled 2x:', wasmts.io.WKTWriter.write(scaled));
+console.log('Area ratio:', scaled.getArea() / poly.getArea(), '(expect 4)');
+console.log('');
+
+// 90-degree rotation around origin
+const rotated = poly.apply((seq, i) => {
+    const x = seq.getX(i);
+    const y = seq.getY(i);
+    seq.setOrdinate(i, 0, -y);
+    seq.setOrdinate(i, 1, x);
+});
+console.log('Rotated 90:', wasmts.io.WKTWriter.write(rotated));
+console.log('');
+
+// 3D coordinate access
+const pt3d = wasmts.geom.createPoint(5, 10, 15);
+let zVal;
+pt3d.apply((seq, i) => { zVal = seq.getZ(i); });
+console.log('3D point Z value:', zVal);
+
+translated`,
+
+densifier: `// Densifier - Add vertices along edges to limit segment length
+// Critical for reprojection: straight lon/lat edges become curved arcs
+
+// Simple line densification
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 100 0)');
+console.log('Original line points:', line.getCoordinates().length);
+
+// Static convenience method - densify with max segment length 20
+const dense = wasmts.densify.Densifier.densify(line, 20);
+console.log('Densified line points:', dense.getCoordinates().length);
+console.log('');
+
+// Instance API for more control
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0))');
+console.log('Original polygon points:', poly.getCoordinates().length);
+
+const d = wasmts.densify.Densifier.create(poly);
+wasmts.densify.Densifier.setDistanceTolerance(d, 25);
+wasmts.densify.Densifier.setValidate(d, true);
+const result = wasmts.densify.Densifier.getResultGeometry(d);
+console.log('Densified polygon points:', result.getCoordinates().length);
+console.log('Valid:', result.isValid());
+
+result`,
+
+geometryfixer: `// GeometryFixer - Modern topology repair (JTS 1.19+)
+// Handles self-intersections, collapsed rings, invalid winding order
+
+// Create an invalid polygon (bowtie/self-intersecting)
+const bowtie = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 10, 10 0, 0 10, 0 0))');
+console.log('Input valid?', bowtie.isValid());
+console.log('Input WKT:', wasmts.io.WKTWriter.write(bowtie));
+console.log('');
+
+// Static convenience method
+const fixed = wasmts.geom.util.GeometryFixer.fix(bowtie);
+console.log('Fixed type:', fixed.type);
+console.log('Fixed valid?', fixed.isValid());
+console.log('Fixed WKT:', wasmts.io.WKTWriter.write(fixed));
+console.log('');
+
+// Instance API for more control
+const fixer = wasmts.geom.util.GeometryFixer.create(bowtie);
+wasmts.geom.util.GeometryFixer.setKeepCollapsed(fixer, false);
+wasmts.geom.util.GeometryFixer.setKeepMulti(fixer, true);
+const result = wasmts.geom.util.GeometryFixer.getResult(fixer);
+console.log('Instance result type:', result.type);
+console.log('Instance result valid?', result.isValid());
+
+result`,
+
+coverageunion: `// CoverageUnion - Fast union for non-overlapping adjacent polygons
+// Optimized for polygons sharing edges (like map tiles)
+
+// Create a 2x2 grid of adjacent tiles (non-overlapping, shared edges)
+const tile1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const tile2 = wasmts.io.WKTReader.read('POLYGON ((10 0, 20 0, 20 10, 10 10, 10 0))');
+const tile3 = wasmts.io.WKTReader.read('POLYGON ((0 10, 10 10, 10 20, 0 20, 0 10))');
+const tile4 = wasmts.io.WKTReader.read('POLYGON ((10 10, 20 10, 20 20, 10 20, 10 10))');
+
+console.log('Created 2x2 grid of adjacent tiles');
+console.log('Total area:', tile1.getArea() + tile2.getArea() + tile3.getArea() + tile4.getArea());
+console.log('');
+
+// Union the coverage - faster than CascadedPolygonUnion for non-overlapping input
+const union = wasmts.coverage.CoverageUnion.union([tile1, tile2, tile3, tile4]);
+console.log('Union type:', union.type);
+console.log('Union area:', union.getArea());
+console.log('Valid:', union.isValid());
+
+union`,
+
+precisionmodel: `// PrecisionModel - Control coordinate precision
+// Define coordinate grids for snapping
+
+// Default floating-point precision
+const pmFloat = wasmts.geom.PrecisionModel.create();
+console.log('Type:', pmFloat.getType()); // Floating
+console.log('Floating?', pmFloat.isFloating()); // true
+console.log('');
+
+// Fixed precision with scale factor
+const pm1000 = wasmts.geom.PrecisionModel.createFixed(1000);
+console.log('Type:', pm1000.getType()); // Fixed
+console.log('Scale:', pm1000.getScale()); // 1000
+console.log('Grid size:', pm1000.gridSize()); // 0.001
+console.log('Max sig digits:', pm1000.getMaximumSignificantDigits());
+console.log('');
+
+// Snap values to grid
+console.log('makePrecise(1.23456):', pm1000.makePrecise(1.23456)); // 1.235
+console.log('makePrecise(9.99951):', pm1000.makePrecise(9.99951)); // 10.0
+
+pm1000`,
+
+precisionreducer: `// GeometryPrecisionReducer - Snap geometry coordinates to a grid
+// Essential for MVT encoding: snap to 4096x4096 integer grid
+
+// Create a precision model (integer grid)
+const pm = wasmts.geom.PrecisionModel.createFixed(1.0);
+
+// Polygon with floating-point coordinates
+const poly = wasmts.io.WKTReader.read(
+    'POLYGON ((0.1 0.2, 10.7 0.3, 10.8 10.9, 0.4 10.6, 0.1 0.2))'
+);
+console.log('Original coords:', poly.getCoordinates().map(c => '(' + c.x + ',' + c.y + ')').join(' '));
+
+// Static reduce - snaps to integer grid
+const reduced = wasmts.precision.GeometryPrecisionReducer.reduce(poly, pm);
+console.log('Reduced coords:', reduced.getCoordinates().map(c => '(' + c.x + ',' + c.y + ')').join(' '));
+console.log('Valid:', reduced.isValid());
+console.log('');
+
+// MVT use case: 4096 grid
+const pm4096 = wasmts.geom.PrecisionModel.createFixed(4096);
+console.log('4096 grid size:', pm4096.gridSize());
+console.log('makePrecise(0.123456):', pm4096.makePrecise(0.123456));
+
+console.log('Reduced:', wasmts.precision.GeometryPrecisionReducer.reduce(
+    wasmts.io.WKTReader.read('LINESTRING (0.123 0.456, 10.789 10.012)'), pm4096
+).getCoordinates().map(c => '(' + c.x + ',' + c.y + ')').join(' '));`,
+
+dimension: `// Dimension Constants - Geometry dimensionality and DE-9IM values
+// Used with IntersectionMatrix and spatial analysis
+
+console.log('=== Geometry Dimension Values ===');
+console.log('Point (P):', wasmts.geom.Dimension.P);       // 0
+console.log('Line (L):', wasmts.geom.Dimension.L);         // 1
+console.log('Area (A):', wasmts.geom.Dimension.A);         // 2
+console.log('FALSE:', wasmts.geom.Dimension.FALSE);         // -1
+console.log('TRUE:', wasmts.geom.Dimension.TRUE);           // -2
+console.log('DONTCARE:', wasmts.geom.Dimension.DONTCARE);   // -3
+
+console.log('\\n=== Dimension Symbols ===');
+console.log('SYM_P:', wasmts.geom.Dimension.SYM_P);       // '0'
+console.log('SYM_L:', wasmts.geom.Dimension.SYM_L);       // '1'
+console.log('SYM_A:', wasmts.geom.Dimension.SYM_A);       // '2'
+console.log('SYM_FALSE:', wasmts.geom.Dimension.SYM_FALSE); // 'F'
+console.log('SYM_TRUE:', wasmts.geom.Dimension.SYM_TRUE);   // 'T'
+console.log('SYM_DONTCARE:', wasmts.geom.Dimension.SYM_DONTCARE); // '*'
+
+console.log('\\n=== Conversions ===');
+console.log('toDimensionSymbol(0):', wasmts.geom.Dimension.toDimensionSymbol(0));   // '0'
+console.log('toDimensionSymbol(1):', wasmts.geom.Dimension.toDimensionSymbol(1));   // '1'
+console.log('toDimensionSymbol(2):', wasmts.geom.Dimension.toDimensionSymbol(2));   // '2'
+console.log('toDimensionSymbol(-1):', wasmts.geom.Dimension.toDimensionSymbol(-1)); // 'F'
+
+console.log('\\ntoDimensionValue("0"):', wasmts.geom.Dimension.toDimensionValue('0'));   // 0
+console.log('toDimensionValue("F"):', wasmts.geom.Dimension.toDimensionValue('F'));     // -1
+console.log('toDimensionValue("*"):', wasmts.geom.Dimension.toDimensionValue('*'));     // -3
+
+console.log('\\n=== Geometry getDimension() ===');
+const point = wasmts.geom.createPoint(0, 0);
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 10 10)');
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+console.log('Point dimension:', point.getDimension());   // 0
+console.log('Line dimension:', line.getDimension());     // 1
+console.log('Polygon dimension:', poly.getDimension());  // 2`
         };
 
         // Dropdown handler

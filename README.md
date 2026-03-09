@@ -41,6 +41,11 @@ Currently available:
 - WKT, WKB, and GeoJSON I/O with 3D/4D support
 - User data attachment (getUserData/setUserData)
 - CoordinateSequence access via `geometry.apply(filter)` for coordinate transformations
+- Densifier for adding intermediate vertices (max segment length)
+- GeometryFixer for modern topology repair (self-intersections, winding order)
+- CoverageUnion for fast union of non-overlapping adjacent polygons
+- PrecisionModel for coordinate precision control and grid snapping
+- GeometryPrecisionReducer for snapping coordinates to precision grids
 
 The functional API (`wasmts.geom.*`) is the primary implementation. The OO API (`geom.buffer()`) is syntactic sugar that delegates to the functional API.
 
@@ -849,6 +854,126 @@ console.log('Union area:', union.getArea());
 ```
 
 - `wasmts.operation.union.CascadedPolygonUnion.union(polygonArray)` - Union array of polygons
+
+### Densifier
+
+Add intermediate vertices along edges so no segment exceeds a tolerance length:
+
+```javascript
+// Static convenience method
+const line = wasmts.io.WKTReader.read('LINESTRING (0 0, 100 0)');
+const dense = wasmts.densify.Densifier.densify(line, 20);
+console.log('Points:', dense.getCoordinates().length); // more than 2
+
+// Instance API for more control
+const poly = wasmts.io.WKTReader.read('POLYGON ((0 0, 100 0, 100 100, 0 100, 0 0))');
+const d = wasmts.densify.Densifier.create(poly);
+wasmts.densify.Densifier.setDistanceTolerance(d, 25);
+wasmts.densify.Densifier.setValidate(d, true);
+const result = wasmts.densify.Densifier.getResultGeometry(d);
+```
+
+- `wasmts.densify.Densifier.densify(geom, tolerance)` - Static: densify geometry with max segment length
+- `wasmts.densify.Densifier.create(geom)` - Create Densifier instance
+- `wasmts.densify.Densifier.setDistanceTolerance(d, tolerance)` - Set max segment length
+- `wasmts.densify.Densifier.setValidate(d, isValidated)` - Enable/disable validation of result
+- `wasmts.densify.Densifier.getResultGeometry(d)` - Get densified geometry result
+
+### GeometryFixer
+
+Modern topology repair. Handles self-intersections, collapsed rings, invalid winding order:
+
+```javascript
+// Static convenience method
+const bowtie = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 10, 10 0, 0 10, 0 0))');
+console.log('Valid?', bowtie.isValid()); // false
+const fixed = wasmts.geom.util.GeometryFixer.fix(bowtie);
+console.log('Fixed valid?', fixed.isValid()); // true
+
+// With keepMulti control
+const fixed2 = wasmts.geom.util.GeometryFixer.fix(bowtie, false);
+
+// Instance API for more control
+const fixer = wasmts.geom.util.GeometryFixer.create(bowtie);
+wasmts.geom.util.GeometryFixer.setKeepCollapsed(fixer, false);
+wasmts.geom.util.GeometryFixer.setKeepMulti(fixer, true);
+const result = wasmts.geom.util.GeometryFixer.getResult(fixer);
+```
+
+- `wasmts.geom.util.GeometryFixer.fix(geom)` - Static: fix geometry topology
+- `wasmts.geom.util.GeometryFixer.fix(geom, isKeepMulti)` - Static: fix with MULTI type control
+- `wasmts.geom.util.GeometryFixer.create(geom)` - Create GeometryFixer instance
+- `wasmts.geom.util.GeometryFixer.setKeepCollapsed(fixer, val)` - Keep collapsed components as lower-dimension
+- `wasmts.geom.util.GeometryFixer.setKeepMulti(fixer, val)` - Keep single-item results as MULTI types
+- `wasmts.geom.util.GeometryFixer.getResult(fixer)` - Get fixed geometry result
+
+### CoverageUnion
+
+Fast union optimized for non-overlapping polygons sharing edges (like map tiles):
+
+```javascript
+// Adjacent tiles sharing edges
+const tile1 = wasmts.io.WKTReader.read('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))');
+const tile2 = wasmts.io.WKTReader.read('POLYGON ((10 0, 20 0, 20 10, 10 10, 10 0))');
+const union = wasmts.coverage.CoverageUnion.union([tile1, tile2]);
+console.log('Area:', union.getArea()); // 200
+```
+
+- `wasmts.coverage.CoverageUnion.union(geometryArray)` - Union non-overlapping polygons with shared edges
+
+### PrecisionModel
+
+Control coordinate precision and grid snapping:
+
+```javascript
+// Create fixed precision with scale factor
+const pm = wasmts.geom.PrecisionModel.createFixed(1000);
+console.log(pm.getType());    // "Fixed"
+console.log(pm.getScale());   // 1000
+console.log(pm.gridSize());   // 0.001
+console.log(pm.makePrecise(1.23456)); // 1.235
+
+// Default floating-point precision
+const pmFloat = wasmts.geom.PrecisionModel.create();
+console.log(pmFloat.isFloating()); // true
+```
+
+- `wasmts.geom.PrecisionModel.create()` - Create default FLOATING precision model
+- `wasmts.geom.PrecisionModel.create(type)` - Create by type: "Floating", "Floating-Single", "Fixed"
+- `wasmts.geom.PrecisionModel.create(scale)` - Create FIXED with scale (numeric argument)
+- `wasmts.geom.PrecisionModel.createFixed(scale)` - Create FIXED with explicit scale factor
+- `pm.getType()` - Get type string ("Floating", "Floating-Single", "Fixed")
+- `pm.getScale()` - Get scale factor
+- `pm.isFloating()` - Whether precision is floating-point
+- `pm.makePrecise(value)` - Snap a value to this precision grid
+- `pm.getMaximumSignificantDigits()` - Max significant digits for this model
+- `pm.gridSize()` - Size of the precision grid (1/scale for FIXED)
+
+### GeometryPrecisionReducer
+
+Snap geometry coordinates to a precision grid:
+
+```javascript
+// Snap to integer grid
+const pm = wasmts.geom.PrecisionModel.createFixed(1.0);
+const poly = wasmts.io.WKTReader.read('POLYGON ((0.1 0.2, 10.7 0.3, 10.8 10.9, 0.4 10.6, 0.1 0.2))');
+const reduced = wasmts.precision.GeometryPrecisionReducer.reduce(poly, pm);
+
+// Instance API for more control
+const reducer = wasmts.precision.GeometryPrecisionReducer.create(pm);
+wasmts.precision.GeometryPrecisionReducer.setChangePrecisionModel(reducer, true);
+wasmts.precision.GeometryPrecisionReducer.setRemoveCollapsedComponents(reducer, true);
+const result = wasmts.precision.GeometryPrecisionReducer.reduceInstance(reducer, poly);
+```
+
+- `wasmts.precision.GeometryPrecisionReducer.reduce(geom, pm)` - Static: reduce precision
+- `wasmts.precision.GeometryPrecisionReducer.reduceKeepCollapsed(geom, pm)` - Static: reduce, keeping collapsed components
+- `wasmts.precision.GeometryPrecisionReducer.reducePointwise(geom, pm)` - Static: reduce coordinates only (no topology repair)
+- `wasmts.precision.GeometryPrecisionReducer.create(pm)` - Create reducer instance
+- `wasmts.precision.GeometryPrecisionReducer.setChangePrecisionModel(r, val)` - Change result's precision model
+- `wasmts.precision.GeometryPrecisionReducer.setPointwise(r, val)` - Pointwise reduction (no topology)
+- `wasmts.precision.GeometryPrecisionReducer.setRemoveCollapsedComponents(r, val)` - Remove collapsed components
+- `wasmts.precision.GeometryPrecisionReducer.reduceInstance(r, geom)` - Instance: reduce geometry
 
 ### CoordinateSequence and CoordinateSequenceFilter
 
