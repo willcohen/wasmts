@@ -14,7 +14,7 @@ A WebAssembly port of [JTS (Java Topology Suite)](https://github.com/locationtec
 
 JTS 1.20.0 compiled to WebAssembly with JavaScript API.
 
-This is a proof-of-concept wrapper providing basic JTS functionality. Adding new functionality requires creating Java wrapper methods in `API.java`, exporting them to JavaScript using annotations, and handling type conversions. This isn't particularly difficult but it still isn't fully automatic.
+This is a wrapper providing a subset of JTS functionality. Not all JTS methods are exposed -- adding new ones requires Java bridge methods in `API.java` with GraalVM web-image annotations and JS type conversions. This isn't particularly difficult but it still isn't fully automatic.
 
 **[Request additional JTS features →](https://github.com/willcohen/wasmts/issues/1)**
 
@@ -26,26 +26,28 @@ Currently available:
 - Geometry types: Point, LineString, Polygon, Multi*, GeometryCollection
 - Geometry operations: buffer, union, intersection, difference, convexHull, simplify, copy, reverse, normalize
 - Geometry properties: getBoundary, getCentroid, getEnvelope, getInteriorPoint
-- Advanced buffering with custom parameters (cap/join styles, erosion)
+- Advanced buffering with cap/join style parameters (but no BufferParameters object or single-sided buffers yet)
 - Offset curves for parallel line generation via OffsetCurveBuilder
 - LineMerger for combining connected linestrings
 - CascadedPolygonUnion for efficient multi-polygon union
 - Spatial predicates: contains, intersects, touches, crosses, within, overlaps, covers, coveredBy, equalsTopo
 - Spatial relationships: relate() returns IntersectionMatrix (DE-9IM), pattern matching
-- Dimension constants and conversion methods
+- Dimension constants (Location constants not yet exposed)
 - Validation: isSimple, isRectangle, isEmpty, isValid
 - 2D, 3D (XYZ), and 4D (XYZM) coordinate support
 - PreparedGeometry for optimized repeated predicates
-- Geometry analysis algorithms (minimum bounding rectangles and circles)
-- STRtree spatial indexing
-- WKT, WKB, and GeoJSON I/O with 3D/4D support
+- Geometry analysis: MinimumDiameter, MinimumAreaRectangle, MinimumBoundingCircle (partial -- getMinimumRectangle/getCircle/getCentre/getRadius; getDiameter/getWidthCoordinate/getFarthestPoints not yet exposed)
+- STRtree spatial indexing (insert/query/remove/size; no nearest-neighbour or visitor-based queries yet)
+- WKT, WKB, and GeoJSON I/O with 3D/4D support (basic read/write; WKTWriter instance configuration and WKB hex utilities not yet exposed)
 - User data attachment (getUserData/setUserData)
-- CoordinateSequence access via `geometry.apply(filter)` for coordinate transformations
+- CoordinateSequenceFilter via `geometry.apply(filter)` (CoordinateFilter, GeometryFilter, GeometryComponentFilter not yet exposed)
 - Densifier for adding intermediate vertices (max segment length)
 - GeometryFixer for modern topology repair (self-intersections, winding order)
 - CoverageUnion for fast union of non-overlapping adjacent polygons
 - PrecisionModel for coordinate precision control and grid snapping
 - GeometryPrecisionReducer for snapping coordinates to precision grids
+
+Notable gaps: AffineTransformation, Triangle, concave hulls, linear referencing, Polygonizer, Voronoi/Delaunay triangulation, IsValidOp error details, GeometricShapeFactory.
 
 The functional API (`wasmts.geom.*`) is the primary implementation. The OO API (`geom.buffer()`) is syntactic sugar that delegates to the functional API.
 
@@ -672,7 +674,7 @@ Static methods (functional API):
 
 ### Spatial Indexing (`wasmts.index.strtree.*`)
 
-STRtree - Sort-Tile-Recursive tree for spatial queries:
+STRtree - Sort-Tile-Recursive tree for spatial queries. Basic operations are exposed; `nearestNeighbour()`, `query(envelope, visitor)`, `depth()`, and custom node capacity are not yet available.
 
 - `wasmts.index.strtree.STRtree.create()` - Create new STRtree index
 - `wasmts.index.strtree.STRtree.insert(tree, envelope, item)` - Insert item with bounding box
@@ -721,7 +723,7 @@ Available methods:
 
 ### Geometry Analysis Algorithms (`wasmts.algorithm.*`)
 
-Minimum bounding shapes:
+Partial coverage of JTS's minimum bounding shape algorithms. Additional methods like `getDiameter()`, `getWidthCoordinate()`, `getSupportingSegment()`, `getFarthestPoints()`, and `getExtremalPoints()` are not yet exposed.
 
 ```javascript
 // Create an irregular polygon
@@ -977,7 +979,7 @@ const result = wasmts.precision.GeometryPrecisionReducer.reduceInstance(reducer,
 
 ### CoordinateSequence and CoordinateSequenceFilter
 
-Access and modify geometry coordinates via the JTS CoordinateSequenceFilter pattern:
+Access and modify geometry coordinates via the JTS CoordinateSequenceFilter pattern. Only CoordinateSequenceFilter is currently exposed; CoordinateFilter, GeometryFilter, and GeometryComponentFilter are not yet available.
 
 ```javascript
 // Create a polygon
@@ -1068,7 +1070,7 @@ Use `<script src="wasmts.js">` not `import()` - the loader needs proper path res
 
 ## License
 
-This project contains and distributes JTS (Java Topology Suite) 1.20.0, which is dual-licensed under:
+The WASM binary includes a subset of JTS (Java Topology Suite) 1.20.0. JTS is dual-licensed under:
 
 - [Eclipse Public License v2.0](LICENSE_EPLv2.txt)
 - [Eclipse Distribution License v1.0](LICENSE_EDLv1.txt)
