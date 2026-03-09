@@ -407,8 +407,53 @@
                 }
             }
 
+            // Build coordinate grid in user-space, transform to WGS84
+            let userMinX = Infinity, userMinY = Infinity, userMaxX = -Infinity, userMaxY = -Infinity;
+            for (const c of allCoords) {
+                const ux = c[0] - originX, uy = c[1] - originY;
+                if (ux < userMinX) userMinX = ux; if (ux > userMaxX) userMaxX = ux;
+                if (uy < userMinY) userMinY = uy; if (uy > userMaxY) userMaxY = uy;
+            }
+            const extent = Math.max(userMaxX - userMinX, userMaxY - userMinY, 1);
+            const gridPad = extent * 0.5;
+            const gridStep = extent <= 200 ? 50 : extent <= 1000 ? 100 : 500;
+            const gMinX = Math.floor((userMinX - gridPad) / gridStep) * gridStep;
+            const gMaxX = Math.ceil((userMaxX + gridPad) / gridStep) * gridStep;
+            const gMinY = Math.floor((userMinY - gridPad) / gridStep) * gridStep;
+            const gMaxY = Math.ceil((userMaxY + gridPad) / gridStep) * gridStep;
+
+            const gridCoords = [];
+            const gridLines = [];
+            for (let x = gMinX; x <= gMaxX; x += gridStep) {
+                const i = gridCoords.length;
+                gridCoords.push([x + originX, gMinY + originY, 0, 0]);
+                gridCoords.push([x + originX, gMaxY + originY, 0, 0]);
+                gridLines.push({ axis: 'x', val: x, startIdx: i });
+            }
+            for (let y = gMinY; y <= gMaxY; y += gridStep) {
+                const i = gridCoords.length;
+                gridCoords.push([gMinX + originX, y + originY, 0, 0]);
+                gridCoords.push([gMaxX + originX, y + originY, 0, 0]);
+                gridLines.push({ axis: 'y', val: y, startIdx: i });
+            }
+            const gridWgs84 = await toWGS84(gridCoords);
+            const gridFeatures = gridLines.map(({ axis, val, startIdx }) => ({
+                type: 'Feature',
+                properties: { axis, val, isOrigin: val === 0 },
+                geometry: { type: 'LineString', coordinates: [
+                    gridWgs84[startIdx].slice(0, 2),
+                    gridWgs84[startIdx + 1].slice(0, 2)
+                ]}
+            }));
+
             // Build MapLibre style
             const sources = {};
+            if (gridFeatures.length > 0) {
+                sources['grid'] = {
+                    type: 'geojson',
+                    data: { type: 'FeatureCollection', features: gridFeatures }
+                };
+            }
             const layers = [
                 { id: 'bg', type: 'background', paint: { 'background-color': '#e8e4df' } }
             ];
@@ -498,6 +543,19 @@
                 id: 'ground-plane-line', source: 'ground-plane', type: 'line',
                 paint: { 'line-color': '#b0a898', 'line-width': 1 }
             });
+
+            if (style.sources['grid']) {
+                const gridInsertIdx = style.layers.findIndex(l => l.id === 'ground-plane-line') + 1;
+                style.layers.splice(gridInsertIdx, 0, {
+                    id: 'grid-lines', source: 'grid', type: 'line',
+                    filter: ['==', ['get', 'isOrigin'], false],
+                    paint: { 'line-color': '#c0bbb4', 'line-width': 0.5 }
+                }, {
+                    id: 'grid-origin', source: 'grid', type: 'line',
+                    filter: ['==', ['get', 'isOrigin'], true],
+                    paint: { 'line-color': '#a09890', 'line-width': 1 }
+                });
+            }
         }
 
         // Add vertex markers with coordinate metadata from pre-reprojection data

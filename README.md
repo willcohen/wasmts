@@ -12,7 +12,7 @@ A WebAssembly port of [JTS (Java Topology Suite)](https://github.com/locationtec
 
 ## Status
 
-JTS 1.20.0 compiled to WebAssembly with JavaScript API.
+JTS 1.20.0 transpiled to WebAssembly with JavaScript API.
 
 This is a wrapper providing a subset of JTS functionality. Not all JTS methods are exposed -- adding new ones requires Java bridge methods in `API.java` with GraalVM web-image annotations and JS type conversions. This isn't particularly difficult but it still isn't fully automatic.
 
