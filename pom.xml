@@ -6,7 +6,7 @@
 
     <groupId>net.willcohen</groupId>
     <artifactId>wasmts</artifactId>
-    <version>0.1.0-alpha3</version>
+    <version>0.1.0-alpha4</version>
     <packaging>jar</packaging>
 
     <name>WasmTS</name>

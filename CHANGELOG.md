@@ -3,7 +3,13 @@
 All notable changes to this project will be documented in this file. This change
 log follows the conventions of [keepachangelog.com](http://keepachangelog.com/).
 
-## [Unreleased]
+## [0.1.0-alpha4] - 2026-03-11
+
+### Added
+
+- STILL EXPERIMENTAL: CoordinateSequenceFilter: add an additional `applyCoordinates()` function to streamline operations
+
+## [0.1.0-alpha3] - 2026-03-08
 
 ### Added
 
@@ -52,6 +58,7 @@ Proof of concept: JTS Topology Suite 1.20.0 compiled to WebAssembly using GraalV
 - Browser and Node.js compatible
 - Interactive demo with Monaco editor
 
-[Unreleased]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha3...HEAD
+[Unreleased]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha4...HEAD
+[0.1.0-alpha4]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha2...0.1.0-alpha4
 [0.1.0-alpha3]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha2...0.1.0-alpha3
 [0.1.0-alpha2]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha1...0.1.0-alpha2

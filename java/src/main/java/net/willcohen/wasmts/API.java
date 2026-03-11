@@ -826,6 +826,11 @@ public class API {
     }
 
     @FunctionalInterface
+    interface ApplyCoordinatesFn {
+        Object applyCoordinates(Object geom, Object flatArray, Object valuesPerCoord);
+    }
+
+    @FunctionalInterface
     interface CoordSeqGetXFn {
         Object getX(Object seq, Object i);
     }
@@ -1409,6 +1414,10 @@ public class API {
     @JS.Coerce
     @JS("wasmts.geom.apply = (geom, filterFn) => fn.apply(geom, filterFn);")
     private static native void exportApply(ApplyFn fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.applyCoordinates = (geom, arr, valuesPerCoord) => fn.applyCoordinates(geom, arr, valuesPerCoord);")
+    private static native void exportApplyCoordinates(ApplyCoordinatesFn fn);
 
     @JS.Coerce
     @JS("wasmts.geom.getDimension = (geom) => fn.getDimension(geom);")
@@ -2016,6 +2025,7 @@ public class API {
         g.reverse = () => wasmts.geom.reverse(g);
         g.normalize = () => wasmts.geom.normalize(g);
         g.apply = (filterFn) => wasmts.geom.apply(g, filterFn);
+        g.applyCoordinates = (arr, valuesPerCoord) => wasmts.geom.applyCoordinates(g, arr, valuesPerCoord);
 
         // Predicates (from JTS Geometry)
         g.contains = (other) => wasmts.geom.contains(g, other);
@@ -4060,6 +4070,37 @@ public class API {
         }
     }
 
+    // EXPERIMENTAL — not a standard JTS pattern, may be removed or changed.
+    // Reads x/y from a JS flat array (e.g. Float64Array) at dimensional offsets so
+    // that setOrdinate calls stay in Java. Reduces JS<->WASM boundary crossings
+    // from 4N (callback + 2 setOrdinate + return) to 2N (array element reads).
+    private static class FlatArrayCoordinateSequenceFilter implements CoordinateSequenceFilter {
+        private final Object jsArray;
+        private final int valuesPerCoord;
+        private int idx = 0;
+
+        FlatArrayCoordinateSequenceFilter(Object jsArray, int valuesPerCoord) {
+            this.jsArray = jsArray;
+            this.valuesPerCoord = valuesPerCoord;
+        }
+
+        @Override
+        public void filter(CoordinateSequence seq, int i) {
+            int base = idx * valuesPerCoord;
+            double x = ((JSValue) getJSArrayElement(jsArray, base)).asDouble();
+            double y = ((JSValue) getJSArrayElement(jsArray, base + 1)).asDouble();
+            seq.setOrdinate(i, 0, x);
+            seq.setOrdinate(i, 1, y);
+            idx++;
+        }
+
+        @Override
+        public boolean isDone() { return false; }
+
+        @Override
+        public boolean isGeometryChanged() { return true; }
+    }
+
     // Apply CoordinateSequenceFilter with JS callback - matches JTS Geometry.apply()
     private static Object applyJS(Object geom, Object filterFn) {
         Geometry g = extractGeometry(geom);
@@ -4070,6 +4111,19 @@ public class API {
         copy.apply(filter);
         copy.geometryChanged();
 
+        return createJSGeometry(JSString.of(copy.getGeometryType()), copy);
+    }
+
+    // EXPERIMENTAL — may be removed or changed.
+    // Bulk coordinate replacement from a flat JS array. Avoids per-coordinate
+    // JS callback overhead of applyJS by reading array elements on the Java side.
+    private static Object applyCoordinatesJS(Object geom, Object flatArray, Object valuesPerCoord) {
+        Geometry g = extractGeometry(geom);
+        Geometry copy = g.copy();
+        int s = ((JSValue) valuesPerCoord).asInt();
+        FlatArrayCoordinateSequenceFilter filter = new FlatArrayCoordinateSequenceFilter(flatArray, s);
+        copy.apply(filter);
+        copy.geometryChanged();
         return createJSGeometry(JSString.of(copy.getGeometryType()), copy);
     }
 
@@ -4461,6 +4515,7 @@ public class API {
 
         // Export CoordinateSequenceFilter - matches JTS Geometry.apply()
         exportApply(API::applyJS);
+        exportApplyCoordinates(API::applyCoordinatesJS);
 
         // Export new geometry base class methods
         exportGetDimension(API::getDimensionJS);
