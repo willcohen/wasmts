@@ -17,7 +17,7 @@
     </script>
     <script src="coi-serviceworker.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.19.0/dist/maplibre-gl.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.20.0/dist/maplibre-gl.css">
     <link rel="stylesheet" href="styles.css">
     <script type="importmap">
 {
@@ -26,9 +26,13 @@
     "cherry-cljs/lib/clojure.string.js": "https://cdn.jsdelivr.net/npm/cherry-cljs@0.5.33/lib/clojure.string.js",
     "resource-tracker": "https://cdn.jsdelivr.net/npm/resource-tracker@0.0.1-alpha1/resource.mjs",
     "proj-wasm": "https://cdn.jsdelivr.net/npm/proj-wasm@0.1.0-alpha7/dist/proj.mjs",
-    "maplibre-gl": "https://esm.sh/maplibre-gl@5.19.0?bundle-deps",
-    "backproj": "https://cdn.jsdelivr.net/npm/backproj@0.0.1/dist/backproj.mjs",
-    "maplibre-proj": "https://cdn.jsdelivr.net/npm/maplibre-proj@0.0.1/dist/maplibre-proj.mjs"
+    "maplibre-gl": "https://esm.sh/maplibre-gl@5.20.0?bundle-deps",
+    "backproj": "https://cdn.jsdelivr.net/npm/backproj@0.0.2/dist/backproj.mjs",
+    "maplibre-proj": "https://cdn.jsdelivr.net/npm/maplibre-proj@0.0.2/dist/maplibre-proj.mjs",
+    "lru-cache": "https://cdn.jsdelivr.net/npm/lru-cache@11.2.6/dist/esm/index.js",
+    "pbf": "https://esm.sh/pbf@4.0.1",
+    "@mapbox/vector-tile": "https://esm.sh/@mapbox/vector-tile@2.0.3",
+    "vt-pbf": "https://esm.sh/vt-pbf@3.1.3"
   }
 }
     </script>
@@ -44,7 +48,7 @@
     <details class="about">
         <summary>About WasmTS</summary>
         <div class="about-body">
-            <p>JTS Topology Suite 1.20.0 compiled to WebAssembly using GraalVM Native Image (26 EA) with web-image backend. Direct Java-JavaScript bindings via <code>@JS</code> annotations. Runs entirely client-side.</p>
+            <p>JTS Topology Suite 1.20.0 transpiled to WebAssembly using GraalVM Native Image (26 EA) with web-image backend. Direct Java-JavaScript bindings via <code>@JS</code> annotations. Runs entirely client-side.</p>
             <strong>Features</strong>
             <ul>
                 <li>Geometry types: Point, LineString, Polygon, Multi*, GeometryCollection</li>
@@ -55,11 +59,38 @@
                 <li>LineMerger, CascadedPolygonUnion, OffsetCurveBuilder, Densifier, GeometryFixer</li>
                 <li>WKT, WKB, and GeoJSON input/output</li>
             </ul>
-            <p>Visualization uses <a href="https://www.npmjs.com/package/backproj">backproj</a> + <a href="https://www.npmjs.com/package/maplibre-proj">maplibre-proj</a> to display geometry in EPSG:2249 (MA State Plane) centered on Boston City Hall, via <a href="https://www.npmjs.com/package/proj-wasm">proj-wasm</a> for in-browser coordinate transformation.</p>
+            <p>Visualization uses <a href="https://www.npmjs.com/package/backproj">backproj</a> + <a href="https://www.npmjs.com/package/maplibre-proj">maplibre-proj</a> to display geometry in any projected CRS via <a href="https://www.npmjs.com/package/proj-wasm">proj-wasm</a> for in-browser coordinate transformation. Use the Projection picker above to change the CRS and origin point.</p>
         </div>
     </details>
 
     <div id="loadStatus">Loading WASM module...</div>
+
+    <div id="projConfig" style="display:none">
+      <div class="proj-config-row">
+        <div class="proj-config-group">
+          <label for="crs-search">Projection</label>
+          <div class="crs-search-wrap">
+            <div class="crs-search-row">
+              <input type="text" id="crs-search" placeholder="Search projected CRS..." autocomplete="off">
+              <button class="crs-browse-btn" id="crs-browse" type="button">&#9662;</button>
+            </div>
+            <div class="crs-dropdown" id="crs-dropdown"></div>
+          </div>
+          <div class="crs-chip" id="crs-chip">
+            <span class="crs-chip-code" id="crs-chip-code"></span>
+            <span class="crs-chip-name" id="crs-chip-name"></span>
+          </div>
+        </div>
+        <div class="proj-config-group">
+          <label>Origin (0, 0) in WGS84</label>
+          <div class="origin-inputs">
+            <input type="number" id="origin-lon" step="any" placeholder="Longitude">
+            <input type="number" id="origin-lat" step="any" placeholder="Latitude">
+            <button id="origin-apply">Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <section>
         <h2>Interactive REPL</h2>
@@ -120,7 +151,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
 
     <!-- Load the WASM module -->
-    <script src="https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha3/dist/wasmts.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha4/dist/wasmts.js"></script>
 
     <!-- Load examples -->
     <script src="examples.js"></script>
@@ -138,48 +169,194 @@
         ]}
       });
 
+      const DEFAULT_CRS = 'EPSG:2249';
+      const DEFAULT_ORIGIN_LON = -71.0579667;
+      const DEFAULT_ORIGIN_LAT = 42.3603222;
+      const MAX_CRS_RESULTS = 50;
+
       try {
         const proj = await import('proj-wasm');
         const { initProj } = await import('backproj');
         const { reprojectStyle } = await import('maplibre-proj');
-        const { Map: MapGL } = await import('maplibre-gl');
+        const { Map: MapGL, importScriptInWorkers } = await import('maplibre-gl');
 
+        importScriptInWorkers('data:text/javascript,');
         await initProj();
 
-        // Compute Boston City Hall origin in EPSG:2249 (MA State Plane, US feet)
-        const toSP = await proj.projCreateCrsToCrs({
-          source_crs: WGS84_LON_LAT, target_crs: 'EPSG:2249'
-        });
-        const buf = await proj.coordArray(1);
-        await proj.setCoords(buf, [[-71.0579667, 42.3603222, 0, 0]]);
-        await proj.projTransArray({ p: toSP, direction: 1, n: 1, coord: buf });
-        const [originX, originY] = await proj.getCoords(buf, 0);
+        // Store shared refs for reconfiguration
+        window._projRefs = { proj, reprojectStyle, MapGL };
 
-        // EPSG:2249 -> WGS84 transformer for visualization coordinate conversion
-        const spToWgs84 = await proj.projCreateCrsToCrs({
-          source_crs: 'EPSG:2249', target_crs: WGS84_LON_LAT
+        // Load CRS catalog for the picker
+        const catalog = await proj.getCrsInfoListFromDatabase({ auth_name: '', types: [15] });
+        const seen = new Set();
+        window._projectedCRS = catalog.filter(e => {
+          if (e.deprecated) return false;
+          const key = `${e.auth_name}:${e.code}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
         });
 
-        window._visualizationTools = {
-          MapGL, reprojectStyle, proj, spToWgs84, originX, originY,
-          async toWGS84(coords) {
-            const n = coords.length;
-            if (n === 0) return [];
-            const b = await proj.coordArray(n);
-            await proj.setCoords(b, coords.map(c => [c[0], c[1], c[2] || 0, c[3] || 0]));
-            await proj.projTransArray({ p: spToWgs84, direction: 1, n, coord: b });
-            const result = [];
-            for (let i = 0; i < n; i++) {
-              const [lon, lat, z, m] = await proj.getCoords(b, i);
-              const out = [lon, lat];
-              if (coords[i].length >= 3) out.push(coords[i][2]);
-              if (coords[i].length >= 4) out.push(coords[i][3]);
-              result.push(out);
+        async function applyProjection(crsCode, lonDeg, latDeg) {
+          const toSP = await proj.projCreateCrsToCrs({
+            source_crs: WGS84_LON_LAT, target_crs: crsCode
+          });
+          const buf = await proj.coordArray(1);
+          await proj.setCoords(buf, [[lonDeg, latDeg, 0, 0]]);
+          await proj.projTransArray({ p: toSP, direction: 1, n: 1, coord: buf });
+          const [originX, originY] = await proj.getCoords(buf, 0);
+
+          const spToWgs84 = await proj.projCreateCrsToCrs({
+            source_crs: crsCode, target_crs: WGS84_LON_LAT
+          });
+
+          window._visualizationTools = {
+            MapGL, reprojectStyle, proj, spToWgs84, originX, originY,
+            crsCode, originLon: lonDeg, originLat: latDeg,
+            async toWGS84(coords) {
+              const n = coords.length;
+              if (n === 0) return [];
+              const b = await proj.coordArray(n);
+              await proj.setCoords(b, coords.map(c => [c[0], c[1], c[2] || 0, c[3] || 0]));
+              await proj.projTransArray({ p: spToWgs84, direction: 1, n, coord: b });
+              const result = [];
+              for (let i = 0; i < n; i++) {
+                const [lon, lat, z, m] = await proj.getCoords(b, i);
+                const out = [lon, lat];
+                if (coords[i].length >= 3) out.push(coords[i][2]);
+                if (coords[i].length >= 4) out.push(coords[i][3]);
+                result.push(out);
+              }
+              return result;
             }
-            return result;
+          };
+          console.log('Projection:', crsCode, 'origin =', originX.toFixed(1), originY.toFixed(1));
+
+          if (window._resetVisualization) window._resetVisualization();
+
+          const status = document.getElementById('loadStatus');
+          if (status.classList.contains('success')) {
+            status.textContent = `WasmTS loaded. ${crsCode} — origin at (${lonDeg.toFixed(4)}, ${latDeg.toFixed(4)}). Re-run code to visualize.`;
           }
-        };
-        console.log('backproj ready: EPSG:2249 origin =', originX.toFixed(1), originY.toFixed(1));
+        }
+
+        window._applyProjection = applyProjection;
+        await applyProjection(DEFAULT_CRS, DEFAULT_ORIGIN_LON, DEFAULT_ORIGIN_LAT);
+
+        // Initialize picker UI
+        const configEl = document.getElementById('projConfig');
+        configEl.style.display = '';
+        document.getElementById('origin-lon').value = DEFAULT_ORIGIN_LON;
+        document.getElementById('origin-lat').value = DEFAULT_ORIGIN_LAT;
+
+        // CRS search/dropdown
+        const crsSearchInput = document.getElementById('crs-search');
+        const crsDropdown = document.getElementById('crs-dropdown');
+        const crsChip = document.getElementById('crs-chip');
+        const crsChipCode = document.getElementById('crs-chip-code');
+        const crsChipName = document.getElementById('crs-chip-name');
+        let crsDebounce = null, crsActiveIdx = -1, crsFiltered = [];
+
+        const initialEntry = window._projectedCRS.find(e => `${e.auth_name}:${e.code}` === DEFAULT_CRS);
+        crsChipCode.textContent = DEFAULT_CRS;
+        crsChipName.textContent = initialEntry ? initialEntry.name : '';
+        crsChip.style.display = 'block';
+
+        function filterCatalog(query) {
+          const q = query.toLowerCase();
+          const results = [];
+          for (const e of window._projectedCRS) {
+            const id = `${e.auth_name}:${e.code}`.toLowerCase();
+            const name = (e.name || '').toLowerCase();
+            if (q && !id.includes(q) && !name.includes(q)) continue;
+            results.push(e);
+            if (results.length >= MAX_CRS_RESULTS) break;
+          }
+          return results;
+        }
+
+        function escapeHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+        function renderCrsDropdown() {
+          crsDropdown.innerHTML = '';
+          if (crsFiltered.length === 0) { crsDropdown.style.display = 'none'; return; }
+          for (let i = 0; i < crsFiltered.length; i++) {
+            const entry = crsFiltered[i];
+            const item = document.createElement('div');
+            item.className = 'crs-dropdown-item' + (i === crsActiveIdx ? ' active' : '');
+            const code = `${entry.auth_name}:${entry.code}`;
+            item.innerHTML = `<span class="crs-code">${escapeHtml(code)}</span><span class="crs-name">${escapeHtml(entry.name || '')}</span>`;
+            item.addEventListener('mousedown', (ev) => { ev.preventDefault(); selectCRS(i); });
+            crsDropdown.appendChild(item);
+          }
+          crsDropdown.style.display = 'block';
+        }
+
+        async function selectCRS(idx) {
+          if (idx < 0 || idx >= crsFiltered.length) return;
+          const entry = crsFiltered[idx];
+          const code = `${entry.auth_name}:${entry.code}`;
+          crsDropdown.style.display = 'none';
+          crsSearchInput.value = '';
+          crsChipCode.textContent = code;
+          crsChipName.textContent = entry.name || '';
+          crsChip.style.display = 'block';
+          const lon = parseFloat(document.getElementById('origin-lon').value) || DEFAULT_ORIGIN_LON;
+          const lat = parseFloat(document.getElementById('origin-lat').value) || DEFAULT_ORIGIN_LAT;
+          await applyProjection(code, lon, lat);
+        }
+
+        function doFilter(showAll) {
+          const q = crsSearchInput.value.trim();
+          if (!showAll && !q) { crsDropdown.style.display = 'none'; return; }
+          crsFiltered = filterCatalog(q);
+          crsActiveIdx = -1;
+          renderCrsDropdown();
+        }
+
+        crsSearchInput.addEventListener('input', () => {
+          clearTimeout(crsDebounce);
+          crsDebounce = setTimeout(() => doFilter(false), 200);
+        });
+
+        crsSearchInput.addEventListener('keydown', (e) => {
+          if (crsDropdown.style.display === 'none' || crsFiltered.length === 0) return;
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            crsActiveIdx = Math.min(crsActiveIdx + 1, crsFiltered.length - 1);
+            renderCrsDropdown();
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            crsActiveIdx = Math.max(crsActiveIdx - 1, 0);
+            renderCrsDropdown();
+          } else if (e.key === 'Enter' && crsActiveIdx >= 0) {
+            e.preventDefault();
+            selectCRS(crsActiveIdx);
+          } else if (e.key === 'Escape') {
+            crsDropdown.style.display = 'none';
+          }
+        });
+
+        crsSearchInput.addEventListener('blur', () => {
+          setTimeout(() => { crsDropdown.style.display = 'none'; }, 150);
+        });
+
+        document.getElementById('crs-browse').addEventListener('click', () => {
+          if (crsDropdown.style.display === 'block') {
+            crsDropdown.style.display = 'none';
+          } else {
+            doFilter(true);
+          }
+        });
+
+        document.getElementById('origin-apply').addEventListener('click', async () => {
+          const lon = parseFloat(document.getElementById('origin-lon').value);
+          const lat = parseFloat(document.getElementById('origin-lat').value);
+          if (isNaN(lon) || isNaN(lat)) return;
+          const crsCode = crsChipCode.textContent || DEFAULT_CRS;
+          await applyProjection(crsCode, lon, lat);
+        });
+
       } catch(e) {
         console.warn('backproj init failed (visualization will use SVG fallback):', e.message);
       }
@@ -273,7 +450,8 @@
             document.querySelectorAll('select').forEach(sel => sel.disabled = false);
 
             if (window._visualizationTools) {
-                status.textContent = 'WasmTS loaded. Visualization ready. Coordinates in MA State Plane feet (EPSG:2249) with origin at Boston City Hall.';
+                const vt = window._visualizationTools;
+                status.textContent = `WasmTS loaded. Visualization ready. ${vt.crsCode} — origin at (${vt.originLon.toFixed(4)}, ${vt.originLat.toFixed(4)}).`;
             } else if (window._visualizationInitDone) {
                 status.textContent = 'WasmTS loaded. Visualization using SVG fallback.';
             } else {
@@ -299,6 +477,16 @@
         let visualizationMap = null;
         let visualizationBounds = null;
         let visualization3D = false;
+        let visualizationCleanup = null;
+
+        function resetVisualization() {
+            if (visualizationCleanup) { visualizationCleanup(); visualizationCleanup = null; }
+            if (visualizationMap) { visualizationMap.remove(); visualizationMap = null; }
+            visualizationBounds = null;
+            visualization3D = false;
+            document.getElementById('visualizationSection').style.display = 'none';
+        }
+        window._resetVisualization = resetVisualization;
 
         // GeoJSON coordinate helpers (preserves Z/M)
         function offsetAndCollectCoords(geom, ox, oy, out) {
@@ -378,6 +566,19 @@
             }
         };
 
+        let _cachedBaseStyle = null;
+        const BASE_STYLE_URL = 'https://openmaptiles.github.io/maptiler-basic-gl-style/style-cdn.json';
+        const VT_TILE_URL = 'https://tiles.openstreetmap.us/vector/openmaptiles/{z}/{x}/{y}.mvt';
+        const VT_GLYPHS_URL = 'https://tiles.openstreetmap.us/fonts/{fontstack}/{range}.pbf';
+
+        async function fetchBaseStyle() {
+            if (_cachedBaseStyle) return _cachedBaseStyle;
+            const resp = await fetch(BASE_STYLE_URL);
+            if (!resp.ok) throw new Error(`Failed to fetch base style: ${resp.status}`);
+            _cachedBaseStyle = await resp.json();
+            return _cachedBaseStyle;
+        }
+
         async function visualizationWithMap(groupEntries) {
             const { originX, originY, toWGS84, reprojectStyle, MapGL } = window._visualizationTools;
 
@@ -446,17 +647,42 @@
                 ]}
             }));
 
-            // Build MapLibre style
+            // Build MapLibre style with vector tile base map
             const sources = {};
+            const layers = [];
+            let glyphs = undefined;
+            let sprite = undefined;
+
+            try {
+                const baseStyle = await fetchBaseStyle();
+                sources['openmaptiles'] = {
+                    type: 'vector',
+                    tiles: [VT_TILE_URL],
+                    maxzoom: 14,
+                };
+                glyphs = VT_GLYPHS_URL;
+                if (baseStyle.sprite) sprite = baseStyle.sprite;
+                for (const layer of baseStyle.layers) {
+                    const l = { ...layer };
+                    delete l.minzoom;
+                    delete l.maxzoom;
+                    layers.push(l);
+                }
+            } catch (err) {
+                console.warn('[tiles] Base style fetch failed:', err.message, err);
+                layers.push({ id: 'bg', type: 'background', paint: { 'background-color': '#e8e4df' } });
+            }
+
+            if (!layers.some(l => l.type === 'background')) {
+                layers.unshift({ id: 'bg', type: 'background', paint: { 'background-color': '#e8e4df' } });
+            }
+
             if (gridFeatures.length > 0) {
                 sources['grid'] = {
                     type: 'geojson',
                     data: { type: 'FeatureCollection', features: gridFeatures }
                 };
             }
-            const layers = [
-                { id: 'bg', type: 'background', paint: { 'background-color': '#e8e4df' } }
-            ];
 
             const nGroups = groupEntries.length;
             groupEntries.forEach(({ label, gjGeoms, color }, i) => {
@@ -482,8 +708,11 @@
                 );
             });
 
-            const inputStyle = { version: 8, sources, layers };
-            const { style } = await reprojectStyle({ style: inputStyle, crs: 'EPSG:2249' });
+            const inputStyle = { version: 8, sources, layers, ...(glyphs && { glyphs }), ...(sprite && { sprite }) };
+            if (visualizationCleanup) { visualizationCleanup(); visualizationCleanup = null; }
+            const activeCRS = window._visualizationTools.crsCode || 'EPSG:2249';
+            const { style, cleanup } = await reprojectStyle({ style: inputStyle, crs: activeCRS });
+            visualizationCleanup = cleanup;
 
             // Compute data bounds from reprojected features (not CRS world bounds)
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -535,10 +764,12 @@
                     }]
                 }
             };
-            const bgIdx = style.layers.findIndex(l => l.id === 'bg');
-            style.layers.splice(bgIdx + 1, 0, {
+            // Insert after base map layers, before data layers
+            const firstDataIdx = style.layers.findIndex(l => l.id?.startsWith('src'));
+            const insertIdx = firstDataIdx >= 0 ? firstDataIdx : style.layers.length;
+            style.layers.splice(insertIdx, 0, {
                 id: 'ground-plane', source: 'ground-plane', type: 'fill',
-                paint: { 'fill-color': '#d5d0c8', 'fill-opacity': 0.6 }
+                paint: { 'fill-color': '#d5d0c8', 'fill-opacity': 0.35 }
             }, {
                 id: 'ground-plane-line', source: 'ground-plane', type: 'line',
                 paint: { 'line-color': '#b0a898', 'line-width': 1 }
@@ -654,7 +885,8 @@
             ).join('');
 
             const info = document.getElementById('visualizationInfo');
-            info.textContent = 'MA State Plane (EPSG:2249, NAD83, US feet) with origin at Boston City Hall. (0, 0) = City Hall.';
+            const vt = window._visualizationTools;
+            info.textContent = `${vt.crsCode || 'EPSG:2249'} — origin (0, 0) at (${vt.originLon.toFixed(4)}, ${vt.originLat.toFixed(4)}).`;
 
             const container = document.getElementById('visualizationMap');
 
@@ -674,6 +906,7 @@
                     pitch: 0,
                     bearing: 0,
                 });
+                visualizationMap.on('error', e => console.error('[map error]', e.error?.message || e));
                 visualizationMap.on('load', () => {
                     visualizationMap.fitBounds(bounds, { animate: false, padding: 40 });
                 });

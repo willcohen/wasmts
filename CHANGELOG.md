@@ -7,7 +7,7 @@ log follows the conventions of [keepachangelog.com](http://keepachangelog.com/).
 
 ### Added
 
-- STILL EXPERIMENTAL: CoordinateSequenceFilter: add an additional `applyCoordinates()` function to streamline operations
+- EXPERIMENTAL, may be removed: CoordinateSequenceFilter: add an additional `applyCoordinates()` function to streamline operations
 
 ## [0.1.0-alpha3] - 2026-03-08
 

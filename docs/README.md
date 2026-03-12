@@ -12,11 +12,8 @@ This directory contains the GitHub Pages site for WasmTS.
 To test the demo locally:
 
 ```bash
-# From the project root, serve the files
-python3 -m http.server 8000
-
-# Or with Node.js
-npx http-server -p 8000
+# From the project root
+npm run serve
 
 # Then open: http://localhost:8000/docs/
 ```
@@ -26,7 +23,7 @@ npx http-server -p 8000
 The demo loads WASM files from CDN. Update `index.html` to use the published version:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha1/dist/wasmts.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha4/dist/wasmts.js"></script>
 ```
 
 For local development, the demo can load from `../dist/` instead.

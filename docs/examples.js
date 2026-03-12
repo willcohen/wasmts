@@ -1,6 +1,6 @@
 window.examples = {
     geometry: `// Geometry Methods: Operations, Predicates, Transformations
-// All coordinates in feet from Boston City Hall (EPSG:2249)
+// Coordinates relative to origin in the active CRS (default: EPSG:2249, feet)
 
 const circle1 = wasmts.geom.createPoint(0, 0).buffer(800);
 const circle2 = wasmts.geom.createPoint(1200, 0).buffer(800);
@@ -34,7 +34,7 @@ console.log('isRectangle:', poly.isRectangle());
 await visualization({"Input": [circle1, circle2], "Union": [union]})`,
 
     buffer: `// Buffering - Simple and Advanced
-// Distances in feet from Boston City Hall
+// Distances in active CRS units from origin (default: feet)
 
 const point = wasmts.geom.createPoint(0, 0);
 const buffered = point.buffer(800);
@@ -57,7 +57,7 @@ console.log('Flat cap area:', flatCap.getArea().toFixed(0));
 await visualization({"Point": [point], "Buffer (800 ft)": [buffered], "Line Buffer": [lineBuffer]})`,
 
     strtree: `// STRtree Spatial Indexing
-// 100 random parcels near Boston City Hall
+// 100 random parcels near origin
 const startTime = performance.now();
 
 const index = wasmts.index.strtree.STRtree.create();

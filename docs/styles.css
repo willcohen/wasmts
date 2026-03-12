@@ -37,6 +37,86 @@ details.about li { margin: 2px 0; }
 }
 #loadStatus.success { background: #e8f5e9; color: #2e7d32; }
 #loadStatus.error { background: #ffebee; color: #c62828; }
+#projConfig {
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    background: #fafafa;
+}
+.proj-config-row {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+.proj-config-group { flex: 1; min-width: 200px; }
+.proj-config-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: #555;
+    margin-bottom: 4px;
+}
+.crs-search-wrap { position: relative; }
+.crs-search-row { display: flex; gap: 4px; }
+.crs-search-row input { flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+.crs-browse-btn {
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #f5f5f5;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    margin: 0;
+}
+.crs-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 250px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 0 0 4px 4px;
+    z-index: 1000;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+.crs-dropdown-item {
+    padding: 6px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    border-bottom: 1px solid #f0f0f0;
+}
+.crs-dropdown-item:hover, .crs-dropdown-item.active { background: #e3f2fd; }
+.crs-dropdown-item .crs-code { font-weight: 600; margin-right: 6px; }
+.crs-dropdown-item .crs-name { color: #666; }
+.crs-chip {
+    display: none;
+    margin-top: 4px;
+    padding: 4px 8px;
+    background: #e3f2fd;
+    border-radius: 4px;
+    font-size: 12px;
+}
+.crs-chip .crs-chip-code { font-weight: 600; }
+.crs-chip .crs-chip-name { color: #666; margin-left: 4px; }
+.origin-inputs {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.origin-inputs input {
+    width: 120px;
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 13px;
+}
+.origin-inputs button { margin: 0; padding: 6px 12px; font-size: 13px; }
 section {
     margin-bottom: 20px;
     padding: 16px;
