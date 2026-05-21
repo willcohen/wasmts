@@ -1,0 +1,2752 @@
+;; Manual overrides for the codegen pipeline.
+;;
+;; Two roles:
+;;
+;; 1. Skip lists. Methods/classes that are wrapped by hand in API.java
+;;    (because they have irregular shape, optional args, stateful builders,
+;;    or throw checked exceptions that need translation). The generator
+;;    skips these and emits `// bespoke:` markers pointing at the hand-
+;;    written sections.
+;;
+;; 2. Generic hints. Optional metadata that reflection can't recover
+;;    (erased generic element types, semantic role like :predicate vs
+;;    :measurement). Merged over the reflected entry by the classifier.
+;;
+;; Schema:
+;;   {<fully-qualified-class-symbol>
+;;    ;; Either :all to skip the entire class, or a set of method names.
+;;    <:all | #{"method-name" ...}>}
+;;
+;; Generic hints live under :hints with the same key shape as registry.edn.
+
+{:skip
+ {
+
+  ;; Common skip rationales (used by many entries below — not repeated per-class):
+  ;;   - java.lang.Object payload: methods taking or returning java.lang.Object are
+  ;;     irreducible at the JS boundary (no generic ser/de path).
+  ;;   - JTS-internal types (DCEL, planargraph, index nodes, visitors): user-facing
+  ;;     APIs route through wrapping containers; the internals aren't useful in JS.
+  ;;   - java.awt.* / awt-adjacent: AWT bridge, unreachable from a JS runtime.
+  ;;   - Java interface params (Comparable, Throwable, etc.): JS can't supply these.
+
+  ;; Wholesale package skips. Match any class whose FQN starts with the
+  ;; prefix followed by `.`. Used for fully-internal packages that have
+  ;; no user-facing API surface — every entry would otherwise reach
+  ;; classify-shape's :uncategorized fallback. Class-keyed entries take
+  ;; precedence over these (currently unused; reserved for carve-outs).
+  ;;
+  ;; - geomgraph: DCEL primitives (Edge / EdgeEnd / Label / Node / DirectedEdge)
+  ;;   plus the GeometryGraph builder consumed by OverlayOp/RelateOp/IsValidOp.
+  ;;   The user-facing operations route through OverlayNGRobust / RelateOp;
+  ;;   the DCEL classes themselves are noise. Removes ~302 :uncategorized.
+  ;; - planargraph: edge/node primitives backing LineMerger / Polygonizer.
+  ;;   The user-facing wrappers (LineMerger.getMergedLineStrings,
+  ;;   Polygonizer.getPolygons) hide them entirely. Removes ~84 :uncategorized.
+  ;; - noding: noding pipeline internals (SegmentString / NodingValidator /
+  ;;   IntersectionAdder, etc.). User-facing operations route through
+  ;;   OverlayNGRobust. The three classes whose static helpers are
+  ;;   genuinely JS-callable (IteratedNoder.MAX_ITER constant; Octant
+  ;;   and SegmentPointComparator pure-math helpers exercised by the
+  ;;   differential test suite) carve out via :keep below. Removes ~183
+  ;;   :uncategorized.
+  ;; - index.bintree: bin-tree internals (Interval / Key / NodeBase /
+  ;;   Root). Only Bintree itself is user-callable. Removes ~37.
+  ;; - index.chain: monotone-chain internals (MonotoneChain /
+  ;;   MonotoneChainBuilder). The Action callback interfaces stay
+  ;;   (MonotoneChainOverlapAction / SelectAction). Removes ~16.
+  ;; - index.sweepline: sweep-line internals (just the SweepLineOverlapAction
+  ;;   callback class). The three user-facing classes (SweepLineEvent
+  ;;   constant, SweepLineIndex, SweepLineInterval) carve out via :keep.
+  ;;   Removes 1.
+  "org.locationtech.jts.geomgraph"        :all
+  "org.locationtech.jts.index.bintree"    :all
+  "org.locationtech.jts.index.chain"      :all
+  "org.locationtech.jts.index.sweepline"  :all
+  "org.locationtech.jts.noding"           :all
+  "org.locationtech.jts.planargraph"      :all
+
+  ;; Carve-outs from the package-prefix skips above. The class-level
+  ;; :keep sentinel exempts the class from any matching package skip,
+  ;; so its methods classify normally. Each class here has at least
+  ;; one in-scope template entry that would otherwise be lost to the
+  ;; package skip. Classes whose existing skip-set (further down in
+  ;; this map) already lists specific methods don't need :keep — any
+  ;; class-keyed entry is definitive over the package-prefix wildcard
+  ;; under skip?'s precedence rule.
+  org.locationtech.jts.index.sweepline.SweepLineEvent              :keep
+  org.locationtech.jts.noding.IteratedNoder                        :keep
+  org.locationtech.jts.noding.Octant                               :keep
+  org.locationtech.jts.noding.SegmentPointComparator               :keep
+
+  ;; JTSVersion: instance-method version accessors on a singleton held by
+  ;; the static-final JTSVersion.CURRENT_VERSION field. field-bearing-
+  ;; classes today only handles int/char fields (Dimension constants);
+  ;; exposing JTSVersion would need either string/object field support
+  ;; or a bespoke wasmts.jts.version exporter. main(String[]) is a JVM
+  ;; entry point. toString is an Object override.
+  org.locationtech.jts.JTSVersion :all
+
+  ;; CGAlgorithmsDD.signOfDet2x2: DD param not in coercible-param-types;
+  ;; the wrapped-classes universe lifts DD as a return target but params
+  ;; require an explicit extract<DD> case in coerce-arg-expr.
+  org.locationtech.jts.algorithm.CGAlgorithmsDD
+  #{["signOfDet2x2" ["org.locationtech.jts.math.DD"
+                      "org.locationtech.jts.math.DD"
+                      "org.locationtech.jts.math.DD"
+                      "org.locationtech.jts.math.DD"]]}
+
+  ;; HCoordinate: all 5 remaining methods declare `throws
+  ;; NotRepresentableException` (division-by-zero for the homogeneous
+  ;; intersection). The no-checked-throws? filter rejects these from
+  ;; auto-classify; the bespoke-classify-overrides mechanism (used by
+  ;; WKTReader.read's ParseException) doesn't have a translator wired
+  ;; for NotRepresentableException yet. The .normalize() / coordinate
+  ;; constructors already classify.
+  org.locationtech.jts.algorithm.HCoordinate
+  #{["<init>" ["org.locationtech.jts.algorithm.HCoordinate"
+               "org.locationtech.jts.algorithm.HCoordinate"]]
+    ["getCoordinate" []]
+    ["getX" []]
+    ["getY" []]
+    ["intersection" ["org.locationtech.jts.geom.Coordinate"
+                     "org.locationtech.jts.geom.Coordinate"
+                     "org.locationtech.jts.geom.Coordinate"
+                     "org.locationtech.jts.geom.Coordinate"]]}
+
+  ;; LineIntersector: no-arg ctor on an abstract class -- concrete-class?
+  ;; filter rejects abstracts. Users construct via RobustLineIntersector
+  ;; (already auto-ctor'd in Tier 2).
+  org.locationtech.jts.algorithm.LineIntersector
+  #{["<init>" []]}
+
+  ;; MinimumAreaRectangle ctors. The static getMinimumRectangle(Geometry)
+  ;; convenience (already in :static-only-methods below) covers the use
+  ;; case; the ctors expose an instance API with no exposed instance
+  ;; methods, so wrapping them serves nothing.
+  org.locationtech.jts.algorithm.MinimumAreaRectangle
+  #{["<init>" ["org.locationtech.jts.geom.Geometry"]]
+    ["<init>" ["org.locationtech.jts.geom.Geometry" "boolean"]]}
+
+
+  ;; MinimumBoundingCircle.getExtremalPoints -> Coordinate[]. The Coordinate[]
+  ;; return shape lacks an `:mbc->coordarray` defmethod. 70+ other uncategorized
+  ;; entries across the registry share this return shape, so a one-off shape
+  ;; here would be churn; deferred to Round 4 when the coordarray-returning
+  ;; methods get a unified pass.
+  org.locationtech.jts.algorithm.MinimumBoundingCircle #{"getExtremalPoints"}
+
+  ;; PointLocator: BoundaryNodeRule param (no extract<BoundaryNodeRule>
+  ;; mapping yet). The no-arg ctor uses the OGC_SFS default and is in
+  ;; scope.
+  org.locationtech.jts.algorithm.PointLocator
+  #{["<init>" ["org.locationtech.jts.algorithm.BoundaryNodeRule"]]}
+  ;; PolygonNodeTopology: compareAngle / isInteriorSegment
+  ;; throw IllegalArgumentException on degenerate (0,0) inputs that the
+  ;; property-test generator regularly hits. Other PolygonNodeTopology
+  ;; methods stay in scope; just these two are excluded from auto-gen
+  ;; until the generator learns to avoid zero-length coordinates (or the
+  ;; differential harness treats matching-exceptions as a pass).
+  org.locationtech.jts.algorithm.PolygonNodeTopology
+  #{"compareAngle" "isInteriorSegment"}
+
+  ;; setMaximum(PPD) / setMinimum(PPD) are duplicated by the
+  ;; (Coordinate, Coordinate) overloads already in scope. Exposing the
+  ;; PPD-taking variant would require PPD itself to be a coercible
+  ;; param type; the Coordinate-pair form is the user-friendly API.
+  org.locationtech.jts.algorithm.distance.PointPairDistance
+  #{["setMaximum" ["org.locationtech.jts.algorithm.distance.PointPairDistance"]]
+    ["setMinimum" ["org.locationtech.jts.algorithm.distance.PointPairDistance"]]}
+
+   org.locationtech.jts.awt.FontGlyphReader
+  #{
+    ["read" ["java.lang.String" "java.awt.Font" "org.locationtech.jts.geom.GeometryFactory"]]
+    ["read" ["java.lang.String" "java.awt.Font" "double" "org.locationtech.jts.geom.GeometryFactory"]]
+    }
+
+   org.locationtech.jts.awt.GeometryCollectionShape
+  #{
+    ["add" ["java.awt.Shape"]]
+    ["contains" ["java.awt.geom.Point2D"]]
+    ["contains" ["java.awt.geom.Rectangle2D"]]
+    ["getBounds" []]
+    ["getBounds2D" []]
+    ["getPathIterator" ["java.awt.geom.AffineTransform"]]
+    ["getPathIterator" ["java.awt.geom.AffineTransform" "double"]]
+    ["intersects" ["java.awt.geom.Rectangle2D"]]
+    }
+
+   org.locationtech.jts.awt.IdentityPointTransformation
+  #{
+    ["transform" ["org.locationtech.jts.geom.Coordinate" "java.awt.geom.Point2D"]]
+    }
+
+  ;; ctor takes Collection<PointShape>-ish param; no JS use case.
+   org.locationtech.jts.awt.PolygonShape
+  #{
+    ["<init>" ["org.locationtech.jts.geom.Coordinate[]" "java.util.Collection"]]
+    ["contains" ["java.awt.geom.Rectangle2D"]]
+    ["contains" ["java.awt.geom.Point2D"]]
+    ["getBounds" []]
+    ["getBounds2D" []]
+    ["getPathIterator" ["java.awt.geom.AffineTransform"]]
+    ["getPathIterator" ["java.awt.geom.AffineTransform" "double"]]
+    ["intersects" ["java.awt.geom.Rectangle2D"]]
+    }
+
+   org.locationtech.jts.awt.ShapeWriter
+  #{
+    ["<init>" ["org.locationtech.jts.awt.PointTransformation"]]
+    ["<init>" ["org.locationtech.jts.awt.PointTransformation" "org.locationtech.jts.awt.PointShapeFactory"]]
+    ["toShape" ["org.locationtech.jts.geom.Geometry"]]
+    }
+
+
+  ;; coverage: all 5 CoverageSimplifier static + instance
+  ;; simplify variants take double[] or Geometry[] in non-coercible
+  ;; combinations (double[] not in coercible-param-types; Geometry[]
+  ;; returns need a wrap-return-templates extension).
+  ;; The 5 already-in-scope entries (ctor + 2 instance simplify scalars
+  ;; + 2 setters) cover the canonical auto-ctor workflow.
+  org.locationtech.jts.coverage.CoverageSimplifier
+  #{["simplify" ["double[]"]]
+    ["simplify" ["org.locationtech.jts.geom.Geometry[]" "double"]]
+    ["simplify" ["org.locationtech.jts.geom.Geometry[]" "double[]"]]
+    ["simplifyInner" ["org.locationtech.jts.geom.Geometry[]" "double"]]
+    ["simplifyOuter" ["org.locationtech.jts.geom.Geometry[]" "double"]]}
+
+  ;; Same as LineSequencer.add — duplicated by add(Geometry).
+  org.locationtech.jts.dissolve.LineDissolver
+  #{["add" ["java.util.Collection"]]}
+
+
+  ;; edgegraph internals — Collection<HalfEdge> mirrors the AAA
+  ;; HalfEdge-param skips on edgegraph.HalfEdge / MarkHalfEdge.
+   org.locationtech.jts.edgegraph.EdgeGraph
+  #{
+    ["getVertexEdges" []]
+    }
+
+   org.locationtech.jts.edgegraph.EdgeGraphBuilder
+  #{
+    ["add" ["java.util.Collection"]]
+    ["build" ["java.util.Collection"]]
+    }
+  ;; additions (Coordinate):
+  ;;   - clone — Object override returning Object (not's
+  ;;     auto-skip rule; kept here).
+  ;;   - setX / setY / setZ / setM / setOrdinate / setCoordinate — JS
+  ;;     mutators; users mutate the JS literal directly (`c.x = 5`).
+  ;;   - getOrdinate(int) — niche int-indexed getter; users use c.x/c.y/c.z.
+  ;; (hashCode / equals(Object) / toString auto-skip's
+  ;; object-override classify rule.)
+  org.locationtech.jts.geom.Coordinate
+  #{"clone"
+    ["setX" ["double"]] ["setY" ["double"]] ["setZ" ["double"]]
+    ["setM" ["double"]] "setOrdinate" "getOrdinate"
+    ["setCoordinate" ["org.locationtech.jts.geom.Coordinate"]]}
+
+  ;; CoordinateArrays: skip the 5 in-place mutators (reverse / 3 scroll overloads / copyDeep /
+  ;; enforceConsistency(arr) all return void and mutate the input;
+  ;; JS-side Coord[] is a plain {x,y} array that doesn't round-trip
+  ;; mutations through the JTS handle), the Comparator-arg equals
+  ;; overload (Comparator not exposable), toCoordinateArray(Collection)
+  ;; (Collection unmappable), and 3 1-method-shape smells
+  ;; (minCoordinate / ptNotInList / atLeastNCoordinatesOrNothing —
+  ;; each would need its own static shape with no sibling reuse).
+  org.locationtech.jts.geom.CoordinateArrays
+  #{"reverse" "minCoordinate" "ptNotInList" "atLeastNCoordinatesOrNothing"
+    ["scroll" ["org.locationtech.jts.geom.Coordinate[]" "int"]]
+    ["scroll" ["org.locationtech.jts.geom.Coordinate[]" "int" "boolean"]]
+    ["scroll" ["org.locationtech.jts.geom.Coordinate[]"
+               "org.locationtech.jts.geom.Coordinate"]]
+    ["copyDeep" ["org.locationtech.jts.geom.Coordinate[]" "int"
+                 "org.locationtech.jts.geom.Coordinate[]" "int" "int"]]
+    ["enforceConsistency" ["org.locationtech.jts.geom.Coordinate[]"]]
+    ["equals" ["org.locationtech.jts.geom.Coordinate[]"
+               "org.locationtech.jts.geom.Coordinate[]"
+               "java.util.Comparator"]]
+    ["toCoordinateArray" ["java.util.Collection"]]}
+
+   org.locationtech.jts.geom.CoordinateList
+  #{
+    ["add" ["java.lang.Object" "boolean"]]
+    ["clone" []]
+    }
+
+  ;; heavy-hitter classes. Mix of true
+  ;; classifications (handled via classify-shape additions + new shapes
+  ;; / wrapped-classes entries) and the per-class skip lists below.
+
+  ;; CoordinateSequence: clone returns Object; toCoordinateArray returns
+  ;; Coordinate[] (deferred — same return-shape bucket as MBC.getExtremalPoints);
+  ;; getCoordinate(int, Coord) is a mutator that copies into the target.
+  org.locationtech.jts.geom.CoordinateSequence
+  #{"clone"
+    "toCoordinateArray"
+    ["getCoordinate" ["int" "org.locationtech.jts.geom.Coordinate"]]}
+
+  ;; static compare(double, double) blocked by javac ambiguity
+  ;; with the instance compare(Object, Object) erasure-bridge (see the
+  ;; templated-static-classes comment about CoordinateSequenceComparator).
+   org.locationtech.jts.geom.CoordinateSequenceComparator
+  #{
+    ["compare" ["java.lang.Object" "java.lang.Object"]]
+    ["compare" ["double" "double"]]
+    }
+
+  ;; CoordinateSequenceFactory is an abstract interface — only the
+  ;; concrete subtypes (PackedCoordinateSequenceFactory etc.) are
+  ;; wrapped. A polymorphic param extractor would need an interface-
+  ;; downcast helper that we don't have.
+   org.locationtech.jts.geom.CoordinateSequences
+  #{
+    ["ensureValidRing" ["org.locationtech.jts.geom.CoordinateSequenceFactory"
+                         "org.locationtech.jts.geom.CoordinateSequence"]]
+    ["extend" ["org.locationtech.jts.geom.CoordinateSequenceFactory"
+                "org.locationtech.jts.geom.CoordinateSequence" "int"]]
+    }
+
+  ;; Envelope: 2 init mutators (state-reset on the same envelope handle
+  ;; — value-type semantic question, defer); instance intersects(Coord,
+  ;; Coord) — segment-vs-envelope predicate auto-gens via
+  ;; :env*coord*coord->bool. The 3 static intersects overloads opt in
+  ;; via :static-only-methods + :js-path hints (intersectsTriangle /
+  ;; intersectsQuad). (4 Object overrides auto-skip's
+  ;; object-override classify rule.)
+  org.locationtech.jts.geom.Envelope
+  #{["init" ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate"]]
+    ["init" ["double" "double" "double" "double"]]}
+
+  ;; Higher-arity Geometry.buffer overloads: collide on the
+  ;; default `wasmts.geom.buffer` path with the simple buffer(double) form.
+  ;; The (double, int) and (double, int, int) variants don't take mitreLimit
+  ;; — for non-default buffer params, callers use BufferOp.bufferOp with
+  ;; BufferParameters. Keeps the canonical `g.buffer(dist)` JS contract.
+  ;; Note: Geometry skip below also takes effect through narrow [name params]
+  ;; entries.
+
+  ;; Geometry methods skipped for one of:
+  ;;   - Object overrides that don't survive the JS boundary: hashCode
+  ;;     (JVM-internal int), toString (uses WKTWriter, distinct from JS
+  ;;     toString), clone (Object#clone is protected/throws).
+  ;;   - compareToSameClass: JTS-internal helper, second arg is a
+  ;;     CoordinateSequenceComparator (not a shape we support).
+  ;;   - Per-arity overloads that would collide on JS path with the migrated
+  ;;     variant. equalsExact(Geometry) (1-arg, no tolerance) collides with
+  ;;     equalsExact(Geometry, double) at `wasmts.geom.equalsExact`; the
+  ;;     2-arg tolerance form is the public JS contract, so skip the 1-arg.
+  ;; equals(Object) and compareTo(Object) auto-gen via :geometry-equals-object /
+  ;; :geometry-compare-to-object.
+  ;; (hashCode / toString auto-skip's object-override
+  ;; classify rule. equals(Object) / compareTo(Object) are exempted from
+  ;; the rule via object-override-keep and classify normally to
+  ;; :geometry-equals-object / :geometry-compare-to-object.)
+  org.locationtech.jts.geom.Geometry
+  #{"compareToSameClass"
+    "clone"
+    ;; additions:
+    ;;   - compareTo(Object, CoordinateSequenceComparator) — CSC is a JTS
+    ;;     internal callback interface (would need a JSCallbackCSC wrap;
+    ;;     niche use case).
+    ;;   - <init>(GeometryFactory) — Geometry is abstract, ctor is
+    ;;     protected; reflection picks it up but it's physically uncallable.
+    ["compareTo" ["java.lang.Object" "org.locationtech.jts.geom.CoordinateSequenceComparator"]]
+    ["<init>" ["org.locationtech.jts.geom.GeometryFactory"]]
+    ["equalsExact" ["org.locationtech.jts.geom.Geometry"]]
+    ["buffer" ["double" "int"]]
+    ["buffer" ["double" "int" "int"]]
+    ;; Geometry.apply has 4 overloads — all 4 auto-gen:
+    ;;   - apply(CoordinateSequenceFilter) at wasmts.geom.apply (preserves the
+    ;;     legacy JS contract via the :geometry-apply-filter shape);
+    ;;   - apply(CoordinateFilter)         at wasmts.geom.applyCoord;
+    ;;   - apply(GeometryComponentFilter)  at wasmts.geom.applyComponent;
+    ;;   - apply(GeometryFilter)           at wasmts.geom.applyGeometry.
+    ;; The three secondary paths sit beside .apply to avoid the JS-path
+    ;; collision; each is hinted in the :hints section below.
+}
+
+   org.locationtech.jts.geom.GeometryCollectionIterator
+  #{
+    ["next" []]
+    }
+
+  ;; GeometryFactory: classify createPolygon(LinearRing) via the new
+  ;; :gf*linearring->geom shape + a :js-path hint to createPolygonFromShell
+  ;; (the 1-arg coord-array variant keeps the canonical createPolygon path).
+  ;; Skip the 8 toXArray(Collection) statics and buildGeometry(Collection)
+  ;; — Collection isn't in coerce-arg-expr and the codegen path for
+  ;; Collection<Geometry> already exists as :static-collection->geom
+  ;; only for static utility classes. The two CoordinateSequenceFactory
+  ;; ctors and getCoordinateSequenceFactory are not in scope (CSF isn't
+  ;; in wrapped-classes / coerce-arg-expr). createPointFromInternalCoord
+  ;; is a JTS-internal optimisation helper. createGeometry(Geometry)
+  ;; clones into this factory's PM — niche; callers can use
+  ;; PrecisionModel.makePrecise + createPoint/etc. The 5 createX(CS)
+  ;; variants are recoverable via createX(Coord[]) plus cs.toCoordinateArray
+  ;; on the consumer side; the path collisions they would introduce
+  ;; (one hint per variant) aren't worth the duplication.
+  org.locationtech.jts.geom.GeometryFactory
+  #{"buildGeometry" "getCoordinateSequenceFactory"
+    "toGeometryArray" "toLinearRingArray" "toLineStringArray"
+    "toMultiLineStringArray" "toMultiPointArray" "toMultiPolygonArray"
+    "toPointArray" "toPolygonArray"
+    ["createGeometry" ["org.locationtech.jts.geom.Geometry"]]
+    ["createPoint" ["org.locationtech.jts.geom.CoordinateSequence"]]
+    ["createLineString" ["org.locationtech.jts.geom.CoordinateSequence"]]
+    ["createLinearRing" ["org.locationtech.jts.geom.CoordinateSequence"]]
+    ["createPolygon" ["org.locationtech.jts.geom.CoordinateSequence"]]
+    ["createMultiPoint" ["org.locationtech.jts.geom.CoordinateSequence"]]
+    ["createPointFromInternalCoord"
+     ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Geometry"]]
+    ["<init>" ["org.locationtech.jts.geom.CoordinateSequenceFactory"]]
+    ["<init>" ["org.locationtech.jts.geom.PrecisionModel" "int"
+               "org.locationtech.jts.geom.CoordinateSequenceFactory"]]}
+  ;; IntersectionMatrix: most methods auto-gen. Instance matches(String)
+  ;; lives at the :js-path-hinted `matchesPattern` because the canonical
+  ;; .matches is the bespoke static (int, char) overload. The two static
+  ;; matches() overloads stay skipped: matches(int, char) needs char
+  ;; coercion (not built); matches(String, String) needs a new
+  ;; :static-im*string*string->bool shape. The 3 ctors stay :uncategorized;
+  ;; the bespoke `new`-able JS constructor in API.java is preserved.
+  org.locationtech.jts.geom.IntersectionMatrix
+  #{["matches" ["java.lang.String" "java.lang.String"]]}
+
+  ;; LineSegment: JTS-internal OLDhashCode + mutators (setCoordinates /
+  ;; reverse / normalize that mutate the seg in place; LineSegment is a
+  ;; value-type, callers can construct a new one); GF-param toGeometry
+  ;; (GeometryFactory not in coerce-arg-expr). (4 Object overrides
+  ;; auto-skip's object-override classify rule.)
+  org.locationtech.jts.geom.LineSegment
+  #{"OLDhashCode"
+    ["setCoordinates" ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate"]]
+    ["setCoordinates" ["org.locationtech.jts.geom.LineSegment"]]
+    "reverse" "normalize"
+    ["toGeometry" ["org.locationtech.jts.geom.GeometryFactory"]]}
+
+  ;; LineString: getCoordinateN(int) classifies via :ls*int->coord and
+  ;; isCoordinate(Coord) via :ls*coord->bool (both LineString-specific,
+  ;; not on Geometry). The rest are Geometry overrides (4 apply / clone /
+  ;; normalize / getBoundary / getNumPoints / getCoordinates /
+  ;; getCoordinate / isEmpty / getDimension / getBoundaryDimension /
+  ;; getGeometryType / equalsExact / getLength / reverse) or
+  ;; deprecated PM-int / CS+GF ctors superseded by
+  ;; GeometryFactory.createLineString.
+  org.locationtech.jts.geom.LineString
+  #{"clone" "normalize" "reverse"
+    ["apply" ["org.locationtech.jts.geom.GeometryFilter"]]
+    ["apply" ["org.locationtech.jts.geom.CoordinateFilter"]]
+    ["apply" ["org.locationtech.jts.geom.CoordinateSequenceFilter"]]
+    ["apply" ["org.locationtech.jts.geom.GeometryComponentFilter"]]
+    ["equalsExact" ["org.locationtech.jts.geom.Geometry" "double"]]
+    "getBoundary" "getBoundaryDimension" "getCoordinate" "getCoordinates"
+    "getDimension" "getGeometryType" "getLength" "getNumPoints"
+    "isEmpty"
+    ["<init>" ["org.locationtech.jts.geom.Coordinate[]"
+               "org.locationtech.jts.geom.PrecisionModel" "int"]]
+    ["<init>" ["org.locationtech.jts.geom.CoordinateSequence"
+               "org.locationtech.jts.geom.GeometryFactory"]]}
+
+  ;; Point: every uncategorized entry is a Geometry override (5 apply /
+  ;; clone / normalize / getBoundary / getNumPoints / getCoordinates /
+  ;; isEmpty / isSimple / getGeometryType / equalsExact /
+  ;; getBoundaryDimension / getDimension / getCoordinate / reverse) or
+  ;; a deprecated PM-int ctor superseded by GeometryFactory.createPoint.
+  ;; getCoordinateSequence classifies via the polymorphic :geometry-get-coordinate-sequence
+  ;; shape (which replaced the LineString-only :ls->cs)
+  ;; — Point and LineString share the wasmts.geom.getCoordinateSequence
+  ;; JS path under the geometry-subtypes collapse, and the new
+  ;; dispatch body instanceof-checks at runtime to call the correct
+  ;; receiver method.
+  org.locationtech.jts.geom.Point
+  #{"clone" "normalize" "reverse"
+    ["apply" ["org.locationtech.jts.geom.GeometryFilter"]]
+    ["apply" ["org.locationtech.jts.geom.CoordinateFilter"]]
+    ["apply" ["org.locationtech.jts.geom.CoordinateSequenceFilter"]]
+    ["apply" ["org.locationtech.jts.geom.GeometryComponentFilter"]]
+    ["equalsExact" ["org.locationtech.jts.geom.Geometry" "double"]]
+    "getBoundary" "getBoundaryDimension" "getCoordinate" "getCoordinates"
+    "getDimension" "getGeometryType" "getNumPoints"
+    "isEmpty" "isSimple"
+    ["<init>" ["org.locationtech.jts.geom.Coordinate"
+               "org.locationtech.jts.geom.PrecisionModel" "int"]]
+    ["<init>" ["org.locationtech.jts.geom.CoordinateSequence"
+               "org.locationtech.jts.geom.GeometryFactory"]]}
+
+
+  ;; Polygon: every uncategorized entry is either a Geometry-base override
+  ;; (apply/clone/normalize/equalsExact/getArea/getGeometryType/getLength/
+  ;; isEmpty/getCoordinate/getCoordinates) that already auto-gens at
+  ;; wasmts.geom.<method> via the Geometry-receiver shape, or a direct
+  ;; PrecisionModel-int ctor that callers should reach through
+  ;; GeometryFactory.createPolygon. isRectangle is also on Geometry
+  ;; (returns false by default; Polygon overrides) — Java runtime
+  ;; polymorphism handles dispatch through extractGeometry, so the
+  ;; Polygon override is redundant at the JS surface.
+  org.locationtech.jts.geom.Polygon
+  #{"clone" "normalize" "isRectangle"
+    ["apply" ["org.locationtech.jts.geom.GeometryFilter"]]
+    ["apply" ["org.locationtech.jts.geom.CoordinateFilter"]]
+    ["apply" ["org.locationtech.jts.geom.CoordinateSequenceFilter"]]
+    ["apply" ["org.locationtech.jts.geom.GeometryComponentFilter"]]
+    ["equalsExact" ["org.locationtech.jts.geom.Geometry" "double"]]
+    "getArea" "getGeometryType" "getLength" "isEmpty"
+    "getCoordinate" "getCoordinates"
+    ["<init>" ["org.locationtech.jts.geom.LinearRing"
+               "org.locationtech.jts.geom.PrecisionModel" "int"]]
+    ["<init>" ["org.locationtech.jts.geom.LinearRing"
+               "org.locationtech.jts.geom.LinearRing[]"
+               "org.locationtech.jts.geom.PrecisionModel" "int"]]
+    ["<init>" ["org.locationtech.jts.geom.LinearRing"
+               "org.locationtech.jts.geom.LinearRing[]"
+               "org.locationtech.jts.geom.GeometryFactory"]]}
+
+  ;; PrecisionModel.hashCode mirrors Geometry: it's a JVM-internal hash
+  ;; that doesn't survive the JS boundary identically. Same reasoning
+  ;; for Coordinate.hashCode if it ever lands in scope.
+  ;;
+  ;; additions (PM):
+  ;;   - equals(Object) / compareTo(Object) — Object overrides.
+  ;;   - 2-Coord toInternal/toExternal — mutators (write rounded values
+  ;;     into the second Coord); the 1-Coord variants returning a new
+  ;;     Coord auto-gen via :pm*coord->coord.
+  ;;   - makePrecise(Coord) — mutator (rounds the Coord in place).
+  ;; (hashCode / equals(Object) / compareTo(Object) auto-skip's
+  ;; object-override classify rule.)
+  org.locationtech.jts.geom.PrecisionModel
+  #{["toInternal" ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate"]]
+    ["toExternal" ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate"]]
+    ["makePrecise" ["org.locationtech.jts.geom.Coordinate"]]}
+
+  ;; Triangle.perpendicularBisector(Coord, Coord) -> HCoordinate. HCoordinate
+  ;; is a JTS-internal homogeneous-coordinate value type with no JS-side
+  ;; representation. The use case (computing bisector geometry) is better
+  ;; served at a higher level (Triangle.circumcentre etc.).
+  org.locationtech.jts.geom.Triangle
+  #{["perpendicularBisector" ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate"]]}
+
+  ;; CoordinateArraySequence.clone -> Object (java.lang.Object return
+  ;; irreducible; .copy() is the user-facing alternative and already
+  ;; in scope via the polymorphic CS template).
+  ;; PackedCoordinateSequenceFactory.create overloads all take
+  ;; double[] / float[] params (neither in coercible-param-types).
+  ;; The (Coordinate[], int) / (int, int) ctor + create variants
+  ;; classify and cover the common case.
+  org.locationtech.jts.geom.impl.CoordinateArraySequence
+  #{["clone" []]}
+
+  org.locationtech.jts.geom.impl.PackedCoordinateSequenceFactory
+  #{["create" ["double[]" "int" "int"]]
+    ["create" ["double[]" "int"]]
+    ["create" ["float[]" "int" "int"]]
+    ["create" ["float[]" "int"]]}
+
+  ;; getInverse() throws NoninvertibleTransformationException
+  ;; (checked); the classifier's no-checked-throws? guard skips. Narrow-
+  ;; skip rather than extending throws-allowance — getInverse is niche.
+   org.locationtech.jts.geom.util.AffineTransformation
+  #{
+    ["clone" []]
+    ["getInverse" []]
+    }
+
+  ;; GeometryEditor.edit takes a GeometryEditor$GeometryEditorOperation
+  ;; inner-class callback — user-subclasses pattern, no JS-side use
+  ;; case beyond what Geometry.apply(*Filter) already covers.
+   org.locationtech.jts.geom.util.GeometryEditor
+  #{
+    ["edit" ["org.locationtech.jts.geom.Geometry"
+              "org.locationtech.jts.geom.util.GeometryEditor$GeometryEditorOperation"]]
+    }
+
+  ;; GeometryFilter-callback shape: filter() is the visitor entry
+  ;; point that user code subclasses, not a method JS code calls
+  ;; directly. The matching .getLines() / .getLineString() / .getList()
+  ;; accumulators are already in scope via the static utility wrapper
+  ;; methods. Skipping these mirrors the GeometryFilter treatment — the
+  ;; callback impl belongs to Java-side users.
+   org.locationtech.jts.geom.util.LineStringExtracter
+  #{
+    ["filter" ["org.locationtech.jts.geom.Geometry"]]
+    ;; <init>(List<LineString>) is the visitor's accumulator
+    ;; ctor — user-Java pattern, not a JS-side construction path.
+    ["<init>" ["java.util.List"]]
+    }
+
+   org.locationtech.jts.geom.util.LinearComponentExtracter
+  #{
+    ["filter" ["org.locationtech.jts.geom.Geometry"]]
+    ["setForceToLineString" ["boolean"]]
+    ;; same callback-accumulator-ctor pattern as
+    ;; LineStringExtracter above.
+    ["<init>" ["java.util.Collection"]]
+    ["<init>" ["java.util.Collection" "boolean"]]
+    }
+
+   org.locationtech.jts.geom.util.ShortCircuitedGeometryVisitor
+  #{
+    ["<init>" []]
+    }
+
+  org.locationtech.jts.index.ArrayListVisitor
+  #{"getItems" "visitItem"}
+
+  ;; index bare: VertexSequencePackedRtree returns Envelope[] /
+  ;; int[] from accessors (return-array wrapping not yet emitted; option
+  ;; E mentions this). ArrayListVisitor exposes a raw java.util.ArrayList
+  ;; payload + an Object visitItem hook (both irreducible at the JS
+  ;; boundary).
+  org.locationtech.jts.index.VertexSequencePackedRtree
+  #{"getBounds"
+    ["query" ["org.locationtech.jts.geom.Envelope"]]}
+
+  ;; index.bintree: Bintree is an Object-keyed interval tree;
+  ;; all uncategorized methods exchange Object payload, internal
+  ;; Interval/Iterator types, or java.util.Collection/List that needs
+  ;; list-extractor list-extractor wrapping.
+  org.locationtech.jts.index.bintree.Bintree
+  #{["ensureExtent" ["org.locationtech.jts.index.bintree.Interval" "double"]]
+    ["insert" ["org.locationtech.jts.index.bintree.Interval" "java.lang.Object"]]
+    ["iterator" []]
+    ["query" ["double"]]
+    ["query" ["org.locationtech.jts.index.bintree.Interval" "java.util.Collection"]]
+    ["query" ["org.locationtech.jts.index.bintree.Interval"]]
+    ["remove" ["org.locationtech.jts.index.bintree.Interval" "java.lang.Object"]]}
+  org.locationtech.jts.index.chain.MonotoneChainOverlapAction
+  #{["overlap" ["org.locationtech.jts.index.chain.MonotoneChain" "int"
+                "org.locationtech.jts.index.chain.MonotoneChain" "int"]]}
+
+  ;; MonotoneChainSelectAction.select(MonotoneChain, int) and
+  ;; MonotoneChainOverlapAction.overlap(MonotoneChain, int, MonotoneChain, int)
+  ;; are visitor-pattern hooks designed to be overridden in Java
+  ;; subclasses. The (LineSegment) / (LineSegment, LineSegment) hooks
+  ;; that already classify are the convenience callbacks JTS itself
+  ;; invokes for the JS-usable case.
+  org.locationtech.jts.index.chain.MonotoneChainSelectAction
+  #{["select" ["org.locationtech.jts.index.chain.MonotoneChain" "int"]]}
+
+  ;; index.hprtree: standard r-tree internal-payload gaps.
+  ;; getBounds -> Envelope[] (return-array wrap pending);
+  ;; insert/remove take Object payload (irreducible);
+  ;; query(Env, ItemVisitor) uses callback wrapping (deferred);
+  ;; query(Env) -> List (List wrap pending).
+  org.locationtech.jts.index.hprtree.HPRtree
+  #{["getBounds" []]
+    ["insert" ["org.locationtech.jts.geom.Envelope" "java.lang.Object"]]
+    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
+    ["query" ["org.locationtech.jts.geom.Envelope"]]
+    ["remove" ["org.locationtech.jts.geom.Envelope" "java.lang.Object"]]}
+
+  ;; index.intervalrtree: IntervalRTreeNode is abstract --
+  ;; concrete-class? rejects abstract-class ctors, and the abstract
+  ;; query(d,d,ItemVisitor) takes a callback. SortedPackedIntervalRTree
+  ;; has the same Object-payload + ItemVisitor callback gaps as the
+  ;; sweepline classes.
+  org.locationtech.jts.index.intervalrtree.IntervalRTreeNode
+  #{["<init>" []]
+    ["query" ["double" "double" "org.locationtech.jts.index.ItemVisitor"]]}
+
+  org.locationtech.jts.index.intervalrtree.SortedPackedIntervalRTree
+  #{["insert" ["double" "double" "java.lang.Object"]]
+    ["query" ["double" "double" "org.locationtech.jts.index.ItemVisitor"]]}
+
+  ;; index.kdtree: KdTree exposes internal KdNode handles
+  ;; (no extract<KdNode> + promotion to the auto-ctor set would expand the surface
+  ;; substantially), Object payload, KdNodeVisitor callbacks, List
+  ;; returns and Collection params. The static toCoordinates Collection
+  ;; helpers also need list-extractor support.
+  org.locationtech.jts.index.kdtree.KdTree
+  #{["getRoot" []]
+    ["insert" ["org.locationtech.jts.geom.Coordinate" "java.lang.Object"]]
+    ["insert" ["org.locationtech.jts.geom.Coordinate"]]
+    ["query" ["org.locationtech.jts.geom.Coordinate"]]
+    ["query" ["org.locationtech.jts.geom.Envelope" "java.util.List"]]
+    ["query" ["org.locationtech.jts.geom.Envelope"
+               "org.locationtech.jts.index.kdtree.KdNodeVisitor"]]
+    ["query" ["org.locationtech.jts.geom.Envelope"]]
+    ["toCoordinates" ["java.util.Collection" "boolean"]]
+    ["toCoordinates" ["java.util.Collection"]]}
+
+   org.locationtech.jts.index.quadtree.Node
+  #{
+    ["find" ["org.locationtech.jts.geom.Envelope"]]
+    }
+
+   org.locationtech.jts.index.quadtree.NodeBase
+  #{
+    ["<init>" []]
+    ["add" ["java.lang.Object"]]
+    ["addAllItems" ["java.util.List"]]
+    ["addAllItemsFromOverlapping" ["org.locationtech.jts.geom.Envelope" "java.util.List"]]
+    ["getItems" []]
+    ["hasChildren" []]
+    ["hasItems" []]
+    ["isEmpty" []]
+    ["isPrunable" []]
+    ["remove" ["org.locationtech.jts.geom.Envelope" "java.lang.Object"]]
+    ["visit" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
+    }
+
+   org.locationtech.jts.index.quadtree.Quadtree
+  #{
+    ["insert" ["org.locationtech.jts.geom.Envelope" "java.lang.Object"]]
+    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
+    ["remove" ["org.locationtech.jts.geom.Envelope" "java.lang.Object"]]
+    }
+
+   org.locationtech.jts.index.strtree.AbstractNode
+  #{
+    ["<init>" []]
+    ["<init>" ["int"]]
+    ["addChildBoundable" ["org.locationtech.jts.index.strtree.Boundable"]]
+    ["getBounds" []]
+    ["getChildBoundables" []]
+    }
+
+   org.locationtech.jts.index.strtree.AbstractSTRtree
+  #{
+    ["<init>" []]
+    ["<init>" ["int"]]
+    ["<init>" ["int" "java.util.ArrayList"]]
+    ["<init>" ["int" "org.locationtech.jts.index.strtree.AbstractNode"]]
+    ["itemsTree" []]
+    }
+
+   org.locationtech.jts.index.strtree.BoundablePairDistanceComparator
+  #{
+    ["compare" ["org.locationtech.jts.index.strtree.BoundablePair" "org.locationtech.jts.index.strtree.BoundablePair"]]
+    }
+
+   org.locationtech.jts.index.strtree.GeometryItemDistance
+  #{
+    ["distance" ["org.locationtech.jts.index.strtree.ItemBoundable" "org.locationtech.jts.index.strtree.ItemBoundable"]]
+    }
+
+   org.locationtech.jts.index.strtree.SIRtree
+  #{
+    ["insert" ["double" "double" "java.lang.Object"]]
+    }
+
+  ;; STRtree: all 8 uncategorized entries take ItemDistance / ItemVisitor
+  ;; callback interfaces or JTS-internal types (STRtreeNode, ArrayList).
+  ;; Callback wrapping would follow the GeometryFilter / CoordinateFilter
+  ;; pattern — non-trivial separate effort.
+  org.locationtech.jts.index.strtree.STRtree
+  #{["<init>" ["int" "java.util.ArrayList"]]
+    ["<init>" ["int" "org.locationtech.jts.index.strtree.STRtree$STRtreeNode"]]
+    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
+    ["nearestNeighbour" ["org.locationtech.jts.index.strtree.ItemDistance"]]
+    ["nearestNeighbour" ["org.locationtech.jts.index.strtree.STRtree" "org.locationtech.jts.index.strtree.ItemDistance"]]
+    ["nearestNeighbour" ["org.locationtech.jts.geom.Envelope" "java.lang.Object" "org.locationtech.jts.index.strtree.ItemDistance"]]
+    ["nearestNeighbour" ["org.locationtech.jts.geom.Envelope" "java.lang.Object" "org.locationtech.jts.index.strtree.ItemDistance" "int"]]
+    ["isWithinDistance" ["org.locationtech.jts.index.strtree.STRtree" "org.locationtech.jts.index.strtree.ItemDistance" "double"]]}
+
+  org.locationtech.jts.index.sweepline.SweepLineIndex
+  #{["computeOverlaps"
+     ["org.locationtech.jts.index.sweepline.SweepLineOverlapAction"]]
+    ["add" ["org.locationtech.jts.index.sweepline.SweepLineInterval"]]}
+
+  ;; index.sweepline: SweepLineInterval has an Object payload
+  ;; (ctor + getItem) which is irreducible at the JS boundary;
+  ;; SweepLineIndex.computeOverlaps takes a SweepLineOverlapAction
+  ;; callback (no callback-wrapping yet); SweepLineIndex.add takes a
+  ;; SweepLineInterval param (the same cross-auto-ctor gap behind the
+  ;; FacetSequence.distance(FS) skip).
+  org.locationtech.jts.index.sweepline.SweepLineInterval
+  #{["<init>" ["double" "double" "java.lang.Object"]]
+    "getItem"}
+
+  ;; io: ByteOrderDataInStream exchanges io.InStream
+  ;; (interface, no extract<InStream>) and `long` / `byte` primitive
+  ;; types not in coercible-param-types. ByteOrderValues exposes raw
+  ;; long getters/setters. The .readDouble / .readInt etc fall through
+  ;; the same `long` / `byte` gap.
+  org.locationtech.jts.io.ByteOrderDataInStream
+  #{["<init>" ["org.locationtech.jts.io.InStream"]]
+    ["getCount" []]
+    ["readByte" []]
+    ["readDouble" []]
+    ["readInt" []]
+    ["readLong" []]
+    ["setInStream" ["org.locationtech.jts.io.InStream"]]}
+
+  org.locationtech.jts.io.ByteOrderValues
+  #{["getLong" ["byte[]" "int"]]
+    ["putLong" ["long" "byte[]" "int"]]}
+
+  ;; WKBReader: read(InStream) needs JTS-stream coercion;
+  ;; <init>(GeometryFactory) needs GeometryFactory in ctor-param-supported?
+  ;; / coerce-arg-expr; hexToBytes(String) -> byte[] needs a byte[] return
+  ;; shape. The no-arg ctor + read(byte[]) auto-gen via the generalised
+  ;; throws-parse shape.
+  org.locationtech.jts.io.WKBReader
+  #{["read" ["org.locationtech.jts.io.InStream"]]
+    ["<init>" ["org.locationtech.jts.geom.GeometryFactory"]]
+    "hexToBytes"}
+
+  ;; WKBWriter: no-arg ctor + write(Geometry) -> byte[] auto-gen
+  ;; via :ctor-wkb-writer + :writer*geom->bytes (returns Uint8Array via
+  ;; API.byteArrayToJSUint8Array). create1(int outputDimension) flows
+  ;; through ctor-param-supported?. Higher-arity ctors collide on the
+  ;; default create<N> path (e.g. (int, int) vs (int, boolean) both at
+  ;; create2) and are skipped here; expose them later if needed via
+  ;; :hints :js-path. Static byte-array helpers (bytesToHex, toHex) and
+  ;; EnumSet-typed setOutputOrdinates / getOutputOrdinates stay out of
+  ;; scope (no coercion). write(Geometry, OutStream) skipped — OutStream
+  ;; not exposable.
+  ;; BREAKING: the wasmts JS contract used to be
+  ;; `wasmts.io.WKBWriter.write(geom)` with implicit dimension detection;
+  ;; it is now `wasmts.io.WKBWriter.write(writer, geom)` with the caller
+  ;; choosing the dimension via create0() / create1(dim).
+  org.locationtech.jts.io.WKBWriter
+  #{"bytesToHex" "toHex" "getOutputOrdinates" "setOutputOrdinates"
+    ["<init>" ["int" "int"]]
+    ["<init>" ["int" "boolean"]]
+    ["<init>" ["int" "int" "boolean"]]
+    ["write" ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.io.OutStream"]]}
+  ;; WKTReader: read(java.io.Reader) needs java.io stream coercion;
+  ;; <init>(GeometryFactory) same gap as WKBReader's; setFixStructure /
+  ;; setIsOldJtsCoordinateSyntaxAllowed / setIsOldJtsMultiPointSyntaxAllowed
+  ;; need a :reader*bool->void shape. The no-arg ctor + read(String)
+  ;; auto-gen via the generalised throws-parse shape.
+  org.locationtech.jts.io.WKTReader
+  #{["read" ["java.io.Reader"]]
+    ["<init>" ["org.locationtech.jts.geom.GeometryFactory"]]
+    "setFixStructure"
+    "setIsOldJtsCoordinateSyntaxAllowed"
+    "setIsOldJtsMultiPointSyntaxAllowed"}
+
+  ;; WKTWriter: no-arg ctor + write(Geometry) -> String auto-gen
+  ;; via :ctor-wkt-writer + :writer*geom->string. The int-arity ctor
+  ;; (outputDimension) is also picked up by ctor-param-supported? so
+  ;; create1(dim) auto-gens too. Setters / static formatting helpers stay
+  ;; out of scope (no current use case for exposing them).
+  org.locationtech.jts.io.WKTWriter
+  #{"writeFormatted" "setFormatted" "setTab" "setOutputOrdinates"
+    "setMaxCoordinatesPerLine" "setPrecisionModel" "getOutputOrdinates"
+    ["write" ["org.locationtech.jts.geom.Geometry" "java.io.Writer"]]
+    "toLineString" "toPoint" "format"}
+
+  ;; GeoJsonConstants: holder for static-final String constants (TYPE,
+  ;; COORDINATES, FEATURE, etc.). field-bearing-classes doesn't support
+  ;; String fields yet; defer until string-field shape lands.
+  org.locationtech.jts.io.geojson.GeoJsonConstants :all
+
+  ;; GeoJsonReader: no-arg ctor + read(String) classify into wasmts.io.geojson.
+  ;; GeoJsonReader.*. Skip the java.io.Reader stream form (stream types not
+  ;; exposable to JS) and the GeometryFactory ctor (GeometryFactory not in
+  ;; the ctor-param-supported? / coerce-arg-expr allowlists; the
+  ;; extractGeometryFactory helper exists in API.java but isn't wired
+  ;; through the codegen yet).
+  org.locationtech.jts.io.geojson.GeoJsonReader
+  #{["read" ["java.io.Reader"]]
+    ["<init>" ["org.locationtech.jts.geom.GeometryFactory"]]}
+
+  ;; GeoJsonWriter: no-arg ctor + write(Geometry) + setters classify into
+  ;; wasmts.io.geojson.GeoJsonWriter.*. Skip the java.io.Writer stream form
+  ;; (stream types not exposable to JS).
+  org.locationtech.jts.io.geojson.GeoJsonWriter
+  #{["write" ["org.locationtech.jts.geom.Geometry" "java.io.Writer"]]}
+  ;; OrientationTransformer: static utility used internally by
+  ;; GeoJsonWriter.setForceCCW(true) to enforce GeoJSON CCW orientation.
+  ;; All 3 transformCCW overloads collide on the same JS path; the user-
+  ;; facing transformCCW(Geometry) wins after skipping the two recursion
+  ;; helpers (LinearRing+boolean and Polygon) that are only meaningful
+  ;; inside JTS's own implementation. Polygon param also lacks coercion
+  ;; support today (singular Polygon not in coercible-param-types).
+  org.locationtech.jts.io.geojson.OrientationTransformer
+  #{["transformCCW" ["org.locationtech.jts.geom.LinearRing" "boolean"]]
+    ["transformCCW" ["org.locationtech.jts.geom.Polygon"]]}
+
+  ;; GMLConstants: same shape as GeoJsonConstants — static-final String
+  ;; constants only.
+  org.locationtech.jts.io.gml2.GMLConstants :all
+
+  ;; GMLHandler: SAX-callback handler taking org.xml.sax.* types and
+  ;; char[]; used internally by GMLReader. Not user-constructed.
+  org.locationtech.jts.io.gml2.GMLHandler :all
+
+  ;; GMLReader: public read interface but read(Reader, GF) uses
+  ;; java.io.Reader (unmappable) and read(String, GF) would need a new
+  ;; :gml-reader*string*gf->geom-throws-parse shape (the existing
+  ;; throws-parse shape is single-arg). Defer until GML demand surfaces.
+  org.locationtech.jts.io.gml2.GMLReader :all
+
+  ;; GMLWriter: ctor + write(Geometry) -> String + bool/int/string/double
+  ;; setters auto-gen via :ctor-gml-writer + :writer*geom->string + the
+  ;; generalised :writer*bool/int/string/double->void shapes. Skipped:
+  ;; setCustomElements (String[] not in coerce-arg-expr); write(Geometry,
+  ;; java.io.Writer) (stream type).
+  org.locationtech.jts.io.gml2.GMLWriter
+  #{"setCustomElements"
+    ["write" ["org.locationtech.jts.geom.Geometry" "java.io.Writer"]]}
+
+  ;; GeometryStrategies: findStrategy(String, String) returns inner
+  ;; class GeometryStrategies$ParseStrategy (no extract helper);
+  ;; internal name lookup keyed by GML element name.
+  org.locationtech.jts.io.gml2.GeometryStrategies :all
+
+  ;; KMLReader ctors all take GeometryFactory and/or Collection<StyleMap>.
+  ;; Neither is in ctor-param-supported? / coerce-arg-expr today; the
+  ;; no-arg ctor auto-gens via :ctor-kml-reader. Adding GF + Collection
+  ;; coercion is a larger separate effort.
+  org.locationtech.jts.io.kml.KMLReader
+  #{["<init>" ["org.locationtech.jts.geom.GeometryFactory"]]
+    ["<init>" ["java.util.Collection"]]
+    ["<init>" ["org.locationtech.jts.geom.GeometryFactory" "java.util.Collection"]]}
+
+  ;; KMLWriter: ctor + write(Geometry) -> String + setters auto-gen.
+  ;; Skipped: writeGeometry overloads (non-shape signatures);
+  ;; write(Geometry, java.io.Writer) and write(Geometry, java.lang.StringBuffer)
+  ;; (Java I/O sinks not exposable to JS).
+  org.locationtech.jts.io.kml.KMLWriter
+  #{"writeGeometry"
+    ["write" ["org.locationtech.jts.geom.Geometry" "java.io.Writer"]]
+    ["write" ["org.locationtech.jts.geom.Geometry" "java.lang.StringBuffer"]]}
+
+  ;; TWKBReader: skip the stream-typed read overloads (DataInput /
+  ;; InputStream) and the GF-typed ctor + setter (GeometryFactory not in
+  ;; ctor-param-supported? / coerce-arg-expr). The no-arg ctor +
+  ;; read(byte[]) auto-gen via :ctor-twkb-reader + the generalised
+  ;; reader-throws-parse shape.
+  org.locationtech.jts.io.twkb.TWKBReader
+  #{["read" ["java.io.DataInput"]]
+    ["read" ["java.io.InputStream"]]
+    ["<init>" ["org.locationtech.jts.geom.GeometryFactory"]]
+    "setGeometryFactory"}
+
+  ;; write(Geometry, DataOutput|OutputStream) target Java I/O sinks
+  ;; that aren't meaningful in WASM. write(Geometry) -> byte[] is the
+  ;; WASM-friendly overload and stays in scope.
+  org.locationtech.jts.io.twkb.TWKBWriter
+  #{["write" ["org.locationtech.jts.geom.Geometry" "java.io.DataOutput"]]
+    ["write" ["org.locationtech.jts.geom.Geometry" "java.io.OutputStream"]]}
+
+   org.locationtech.jts.linearref.LinearLocation
+  #{
+    ["clone" []]
+    }
+
+   org.locationtech.jts.math.DD
+  #{
+    ["clone" []]
+    }
+
+  ;; TWKBReader GeometryFactory entries — folded into the skip
+  ;; block above (see the org.locationtech.jts.io.twkb.TWKBReader entry
+  ;; in the :skip map). GeometryFactory isn't in the
+  ;; ctor-param-supported? / coerce-arg-expr allowlists; the no-arg ctor
+  ;; auto-gens via :ctor-twkb-reader.
+
+  ;; MathUtil.shuffle(int) -> int[]. int[] return shape not supported and
+  ;; the use case is non-essential (returns a permutation of 0..n-1).
+  org.locationtech.jts.math.MathUtil #{"shuffle"}
+
+   org.locationtech.jts.math.Vector2D
+  #{
+    ["clone" []]
+    }
+
+  ;; BoundaryOp: BoundaryNodeRule overloads. BoundaryNodeRule is a
+  ;; strategy-interface (Mod2 / EndPoint / OGC_SFS / Multivalent
+  ;; constants) not yet in coercible-param-types — would need
+  ;; extractBoundaryNodeRule mapping a string name to the static
+  ;; constant. The (Geometry)-only overloads classify and cover the
+  ;; OGC_SFS_BOUNDARY_RULE default case.
+  org.locationtech.jts.operation.BoundaryOp
+  #{["<init>" ["org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.algorithm.BoundaryNodeRule"]]
+    ["hasBoundary" ["org.locationtech.jts.geom.Geometry"
+                    "org.locationtech.jts.algorithm.BoundaryNodeRule"]]
+    ["getBoundary" ["org.locationtech.jts.geom.Geometry"
+                    "org.locationtech.jts.algorithm.BoundaryNodeRule"]]}
+
+  ;; GeometryGraphOperation: abstract-looking base class for relate /
+  ;; overlay operations; users construct subclasses (RelateOp,
+  ;; OverlayNG, etc.). Direct GGO instances have no meaningful surface
+  ;; beyond getArgGeometry(int), which only echoes back what was passed
+  ;; to the ctor.
+  org.locationtech.jts.operation.GeometryGraphOperation :all
+
+  ;; IsSimpleOp: same BoundaryNodeRule-overload gap as BoundaryOp above
+  ;; — strategy-interface param not in coercible-param-types. The
+  ;; (Geometry)-only ctor classifies and covers the OGC_SFS default case.
+  org.locationtech.jts.operation.IsSimpleOp
+  #{["<init>" ["org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.algorithm.BoundaryNodeRule"]]}
+
+  ;; operation.buffer: BufferCurveSetBuilder.getCurves returns
+  ;; java.util.List (List-of-Geometry needs a list-extractor codegen).
+  ;; VariableBuffer's ctor + static buffer(Geom, double[]) + getResult
+  ;; are blocked on double[] not being in coercible-param-types (only
+  ;; byte[], Coordinate[], Geometry[], LinearRing[], Point[],
+  ;; LineString[], Polygon[] are coercible array types today).
+  org.locationtech.jts.operation.buffer.BufferCurveSetBuilder
+  #{"getCurves"}
+  ;; BufferOp: expose only the parametric static
+  ;; bufferOp(Geometry, double, BufferParameters). The redundant overloads
+  ;; (Geometry,double / Geometry,double,int / Geometry,double,int,int) duplicate
+  ;; the auto-genned instance buffer(double / double,int / double,int,int),
+  ;; so they're skipped to avoid JS-path noise. All instance methods,
+  ;; ctors, bufferByZero, depthDelta, etc. stay :uncategorized.
+  org.locationtech.jts.operation.buffer.BufferOp
+  #{["bufferOp" ["org.locationtech.jts.geom.Geometry" "double"]]
+    ["bufferOp" ["org.locationtech.jts.geom.Geometry" "double" "int"]]
+    ["bufferOp" ["org.locationtech.jts.geom.Geometry" "double" "int" "int"]]
+    "bufferByZero"}
+
+  ;; OffsetCurve: expose the two static getCurve overloads
+  ;; (simple and parametric). The 5-arg form collides with the 2-arg form
+  ;; on the natural `getCurve` path; the 5-arg is hinted to
+  ;; `getCurveParametric` in :hints. Skip rawOffset (returns Coordinate[]
+  ;; which we don't expose as a leaf type) and getCurveJoined (no current
+  ;; use case; keep the default getCurve).
+  org.locationtech.jts.operation.buffer.OffsetCurve
+  #{"rawOffset" "getCurveJoined"}
+
+  org.locationtech.jts.operation.buffer.VariableBuffer
+  #{["<init>" ["org.locationtech.jts.geom.Geometry" "double[]"]]
+    ["buffer" ["org.locationtech.jts.geom.Geometry" "double[]"]]
+    "getResult"}
+
+  ;; Returns operation.buffer.validate.PointPairDistance — a different
+  ;; (unwrapped) class than algorithm.distance.PointPairDistance.
+  ;; Would need a separate wrap helper to disambiguate the two
+  ;; same-simple-name classes.
+  org.locationtech.jts.operation.buffer.validate.BufferCurveMaximumDistanceFinder
+  #{"getDistancePoints"}
+
+  ;; DistanceOp: ctors + .distance() classify (DOp joins wrapped-classes,
+  ;; both ctors via :ctor-wrapped, instance .distance via :wrapped->double).
+  ;; Skip the INSTANCE (no-arg) variants only — they return Coordinate[]
+  ;; (deferred — same return-shape bucket as MBC.getExtremalPoints) or
+  ;; GeometryLocation[] (no JS wrap). The STATIC nearestPoints(Geom, Geom)
+  ;; / closestPoints(Geom, Geom) variants continue to classify via
+  ;; :static-geom*geom->coordarray (existing pre-RR coverage).
+  org.locationtech.jts.operation.distance.DistanceOp
+  #{["nearestPoints" []]
+    ["closestPoints" []]
+    ["nearestLocations" []]
+    ["closestLocations" []]}
+
+  ;; FacetSequence is in templated-receiver-classes; ctors + 7 primitive-
+  ;; returning instance methods classify via :receiver-call. Skips:
+  ;;
+  ;;   distance(FacetSequence) -> double            -- same-class param
+  ;;   nearestLocations(FacetSequence) -> GLoc[]    -- same-class param + array return
+  ;;
+  ;; Same-class wrapped-param coercion is unwired (the same cross-
+  ;; auto-ctor param gap that blocks DistanceOp); the GeometryLocation[]
+  ;; return is the same JS-wrap gap (no createJSGeometryLocationArray
+  ;; helper). Both narrow-skipped pending future infra; the sibling
+  ;; IndexedFacetDistance's static distance(g, g) covers the common path.
+  org.locationtech.jts.operation.distance.FacetSequence
+  #{["distance" ["org.locationtech.jts.operation.distance.FacetSequence"]]
+    ["nearestLocations" ["org.locationtech.jts.operation.distance.FacetSequence"]]}
+
+  ;; IndexedFacetDistance.nearestLocations(Geometry) -> GeometryLocation[]
+  ;; -- the static distance(g, g) entry and the 6 instance primitive
+  ;; getters already classify. Same GeometryLocation[]-no-JS-wrap gap
+  ;; as the FacetSequence + DistanceOp skips above.
+  org.locationtech.jts.operation.distance.IndexedFacetDistance
+  #{["nearestLocations" ["org.locationtech.jts.geom.Geometry"]]}
+
+   org.locationtech.jts.operation.distance3d.AxisPlaneCoordinateSequence
+  #{
+    ["clone" []]
+    ["copy" []]
+    ["expandEnvelope" ["org.locationtech.jts.geom.Envelope"]]
+    ["getCoordinate" ["int"]]
+    ["getCoordinate" ["int" "org.locationtech.jts.geom.Coordinate"]]
+    ["getCoordinateCopy" ["int"]]
+    ["getDimension" []]
+    ["getOrdinate" ["int" "int"]]
+    ["getX" ["int"]]
+    ["getY" ["int"]]
+    ["getZ" ["int"]]
+    ["setOrdinate" ["int" "int" "double"]]
+    ["size" []]
+    ["toCoordinateArray" []]
+    }
+
+  ;; LineMerger's planargraph backing (EdgeString / LineMergeDirectedEdge
+  ;; / LineMergeEdge / LineMergeGraph): internal graph structure built up by
+  ;; LineMerger.add() and consumed by LineMerger.getMergedLineStrings().
+  ;; Direct construction has no user-facing value; the LineMerger wrapper is
+  ;; the appropriate entry point.
+  org.locationtech.jts.operation.linemerge.EdgeString :all
+  org.locationtech.jts.operation.linemerge.LineMergeDirectedEdge :all
+  org.locationtech.jts.operation.linemerge.LineMergeEdge :all
+  org.locationtech.jts.operation.linemerge.LineMergeGraph :all
+
+  ;; LineMerger.add(Collection<Geometry>) — bulk variant of add(Geometry)
+  ;; (which already auto-gens via :linemerger-add). The codegen has
+  ;; no Collection<Geometry> param support; JS callers iterate and call
+  ;; the single-Geometry overload per element.
+  org.locationtech.jts.operation.linemerge.LineMerger
+  #{["add" ["java.util.Collection"]]}
+
+  ;; add(Collection) is duplicated by add(Geometry), which classifies.
+  ;; Collection coercion isn't wired; JS users use add(Geometry) per
+  ;; element.
+  org.locationtech.jts.operation.linemerge.LineSequencer
+  #{["add" ["java.util.Collection"]]}
+
+  ;; OverlayNodeFactory.createNode(Coordinate): returns geomgraph.Node
+  ;; (internal DCEL type, not on the JS boundary). The class itself is
+  ;; an extension point for the overlay pipeline — users don't construct
+  ;; it directly.
+  org.locationtech.jts.operation.overlay.OverlayNodeFactory
+  #{["createNode" ["org.locationtech.jts.geom.Coordinate"]]}
+
+  ;; OverlayOp: getGraph returns geomgraph.PlanarGraph (internal);
+  ;; isResultOfOp takes geomgraph.Label (internal). User-facing
+  ;; statics — intersection / union / difference / symDifference /
+  ;; overlayOp — classify and stay in scope.
+  org.locationtech.jts.operation.overlay.OverlayOp
+  #{"getGraph"
+    ["isResultOfOp" ["org.locationtech.jts.geomgraph.Label" "int"]]}
+
+  ;; Returns raw java.util.List with no element type. Needs new
+  ;; list-extractor machinery (WORKPLAN E. wrap-return-direct-types
+  ;; expansion); deferred.
+  org.locationtech.jts.operation.overlay.validate.OffsetPointGenerator
+  #{["getPoints" ["double"]]}
+
+  ;; LineLimiter.limit(Coordinate[]) -> List<Coordinate[]> -- nested
+  ;; list-of-array return (List wrapping covers it; nested array adds another
+  ;; layer of wrap-codegen). The user-facing OverlayNG entry points cover
+  ;; the common limit-by-envelope workflow.
+  org.locationtech.jts.operation.overlayng.LineLimiter
+  #{["limit" ["org.locationtech.jts.geom.Coordinate[]"]]}
+
+  ;; operation.overlayng: all variants take Noder (interface,
+  ;; no extract<Noder> emitter) or Collection<Geometry> (no list-extractor
+  ;; yet). The OverlayNG.overlay(g, g, int) + OverlayNG.overlay(g, g, int, PM)
+  ;; canonical entry points already classify; the Noder-aware overloads
+  ;; are for advanced users who need custom noding strategies.
+  org.locationtech.jts.operation.overlayng.OverlayNG
+  #{["overlay" ["org.locationtech.jts.geom.Geometry"
+                 "org.locationtech.jts.geom.Geometry" "int"
+                 "org.locationtech.jts.geom.PrecisionModel"
+                 "org.locationtech.jts.noding.Noder"]]
+    ["overlay" ["org.locationtech.jts.geom.Geometry"
+                 "org.locationtech.jts.geom.Geometry" "int"
+                 "org.locationtech.jts.noding.Noder"]]}
+
+  org.locationtech.jts.operation.overlayng.OverlayNGRobust
+  #{["union" ["java.util.Collection" "org.locationtech.jts.geom.GeometryFactory"]]}
+
+  org.locationtech.jts.operation.overlayng.UnaryUnionNG
+  #{["union" ["java.util.Collection" "org.locationtech.jts.geom.GeometryFactory"
+              "org.locationtech.jts.geom.PrecisionModel"]]
+    ["union" ["java.util.Collection" "org.locationtech.jts.geom.PrecisionModel"]]}
+
+  ;; operation.polygonize: all 5 Polygonizer methods exchange
+  ;; java.util.Collection<Geometry> in either direction. List-extractor +
+  ;; JSArray wrap is the prerequisite. The
+  ;; canonical .add(Geometry) + .add(LineString) overloads + .getGeometry()
+  ;; -> Geometry already classify and cover the typical workflow.
+  org.locationtech.jts.operation.polygonize.Polygonizer
+  #{["add" ["java.util.Collection"]]
+    "getCutEdges"
+    "getDangles"
+    "getInvalidRingLines"
+    "getPolygons"}
+
+  ;; operation.relate: EdgeEndBuilder + RelateNodeGraph expose
+  ;; internal GeometryGraph / Edge / Iterator / List types from the DCEL
+  ;; computation, not user-facing. RelateOp's BoundaryNodeRule overloads
+  ;; for ctor + static relate parallel the BoundaryOp/IsSimpleOp pattern
+  ;; (BNR not coercible). The user-facing static RelateOp.relate(g, g)
+  ;; classifies and covers the typical workflow.
+  org.locationtech.jts.operation.relate.EdgeEndBuilder
+  #{["computeEdgeEnds" ["java.util.Iterator"]]
+    ["computeEdgeEnds" ["org.locationtech.jts.geomgraph.Edge" "java.util.List"]]}
+
+  org.locationtech.jts.operation.relate.RelateNodeGraph
+  #{["build" ["org.locationtech.jts.geomgraph.GeometryGraph"]]
+    ["computeIntersectionNodes" ["org.locationtech.jts.geomgraph.GeometryGraph" "int"]]
+    ["copyNodesAndLabels" ["org.locationtech.jts.geomgraph.GeometryGraph" "int"]]
+    ["getNodeIterator" []]
+    ["insertEdgeEnds" ["java.util.List"]]}
+
+  org.locationtech.jts.operation.relate.RelateOp
+  #{["<init>" ["org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.algorithm.BoundaryNodeRule"]]
+    ["relate" ["org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.algorithm.BoundaryNodeRule"]]}
+
+  ;; RelateNG: in-scope is evaluate(Geom) -> IM, evaluate(Geom, String) -> bool,
+  ;; prepare(Geom) -> RelateNG. Skipped: every overload that takes
+  ;; BoundaryNodeRule (not coercible) or TopologyPredicate (interface).
+  org.locationtech.jts.operation.relateng.RelateNG
+  #{["evaluate" ["org.locationtech.jts.geom.Geometry"
+                  "org.locationtech.jts.operation.relateng.TopologyPredicate"]]
+    ["prepare" ["org.locationtech.jts.geom.Geometry"
+                 "org.locationtech.jts.algorithm.BoundaryNodeRule"]]
+    ["relate" ["org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.algorithm.BoundaryNodeRule"]]
+    ["relate" ["org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.operation.relateng.TopologyPredicate"
+                "org.locationtech.jts.algorithm.BoundaryNodeRule"]]
+    ["relate" ["org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.operation.relateng.TopologyPredicate"]]}
+
+  ;; CascadedPolygonUnion: the static union(Collection<Geometry>) -> Geometry
+  ;; convenience already classifies as :static-collection->geom (the only
+  ;; in-scope entry for this class). The 4 uncategorized entries — both
+  ;; ctors taking Collection (and optionally a UnionStrategy callback),
+  ;; the static union with a UnionStrategy override, and the instance
+  ;; union() — need either Collection coercion + UnionStrategy callback
+  ;; wrapping, both of which are larger separate efforts.
+  org.locationtech.jts.operation.union.CascadedPolygonUnion
+  #{["<init>" ["java.util.Collection"]]
+    ["<init>" ["java.util.Collection" "org.locationtech.jts.operation.union.UnionStrategy"]]
+    ["union" ["java.util.Collection" "org.locationtech.jts.operation.union.UnionStrategy"]]
+    ["union" []]}
+
+  ;; operation.union: OverlapUnion + UnaryUnionOp UnionStrategy
+  ;; (interface) and java.util.Collection<Geometry> overloads. The
+  ;; canonical UnaryUnionOp.union(Geometry) + .getResult instance entry
+  ;; points classify; CascadedPolygonUnion.union(Collection) is the
+  ;; bespoke entry point for Collection-input unioning.
+  org.locationtech.jts.operation.union.OverlapUnion
+  #{["<init>" ["org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.operation.union.UnionStrategy"]]
+    ["union" ["org.locationtech.jts.geom.Geometry"
+               "org.locationtech.jts.geom.Geometry"
+               "org.locationtech.jts.operation.union.UnionStrategy"]]}
+
+  org.locationtech.jts.operation.union.UnaryUnionOp
+  #{["<init>" ["java.util.Collection" "org.locationtech.jts.geom.GeometryFactory"]]
+    ["<init>" ["java.util.Collection"]]
+    ["setUnionFunction" ["org.locationtech.jts.operation.union.UnionStrategy"]]
+    ["union" ["java.util.Collection" "org.locationtech.jts.geom.GeometryFactory"]]
+    ["union" ["java.util.Collection"]]}
+
+  ;; IsSimpleOp.getNonSimpleLocation(Geometry): static method throws
+  ;; NullPointerException unless isSimple(Geometry) was called first
+  ;; (lazy field init). The property test generator regularly hits
+  ;; simple inputs, so the static contract isn't safely exposable
+  ;; without ordering. The instance method form remains in scope via
+  ;; :receiver-call and is safe (callers explicitly construct + invoke).
+  org.locationtech.jts.operation.valid.IsSimpleOp
+  #{["getNonSimpleLocation" ["org.locationtech.jts.geom.Geometry"]]
+    ;; IsSimpleOp promotion to the auto-ctor set deferred because helper="IsSimpleOp"
+    ;; would collide with the existing operation.IsSimpleOp wrapped-class
+    ;; entry (Java method-name collision in API_Generated.java between
+    ;; two createJSIsSimpleOp / extractIsSimpleOp pairs). User-facing
+    ;; isSimple(Geometry) static already classifies via
+    ;; templated-static-classes; the typical user route is
+    ;; Geometry.isSimple() which is also in scope. Promotion under a
+    ;; disambiguated helper (e.g. "ValidIsSimpleOp") deferred to a
+    ;; focused follow-up.
+    ["<init>" ["org.locationtech.jts.geom.Geometry"
+                "org.locationtech.jts.algorithm.BoundaryNodeRule"]]
+    ["<init>" ["org.locationtech.jts.geom.Geometry"]]
+    ["getNonSimpleLocation" []]
+    ["getNonSimpleLocations" []]
+    ["isSimple" []]
+    ["setFindAllLocations" ["boolean"]]}
+
+
+  ;; precision.CommonBits: all static helpers exchange `long`
+  ;; (bit-twiddling on IEEE 754 doubles via their long encoding) plus
+  ;; the toString(long) hex pretty-printer. `long` not yet in
+  ;; coercible-param-types/wrap-return-templates. The instance API
+  ;; (already in scope) covers
+  ;; the typical CommonBits user workflow.
+  org.locationtech.jts.precision.CommonBits
+  #{["getBit" ["long" "int"]]
+    ["numCommonMostSigMantissaBits" ["long" "long"]]
+    ["signExpBits" ["long"]]
+    ["toString" ["long"]]
+    ["zeroLowerBits" ["long" "int"]]}
+
+
+  ;; No public ctor — instance methods are unreachable from JS.
+  ;; bezierCurve() statics are the only public surface.
+  org.locationtech.jts.shape.CubicBezierCurve #{"getResult"}
+
+  ;; DouglasPeuckerSimplifier: the static simplify(Geometry,
+  ;; double) auto-gens via :static-only-methods below as a
+  ;; :static-geom*double->geom install at wasmts.simplify.DouglasPeuckerSimplifier.simplify.
+  ;; The instance / stateful-builder side stays out of scope.
+  org.locationtech.jts.simplify.DouglasPeuckerSimplifier
+  #{"<init>" "setDistanceTolerance" "setEnsureValid" "getResultGeometry"}
+
+   org.locationtech.jts.triangulate.ConstraintVertex
+  #{
+    ["getConstraint" []]
+    ["setConstraint" ["java.lang.Object"]]
+    }
+
+   org.locationtech.jts.triangulate.Segment
+  #{
+    ["<init>" ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate" "java.lang.Object"]]
+    ["<init>" ["double" "double" "double" "double" "double" "double" "java.lang.Object"]]
+    ["getData" []]
+    ["setData" ["java.lang.Object"]]
+    }
+
+  org.locationtech.jts.triangulate.polygon.ConstrainedDelaunayTriangulator
+  #{"getTriangles"}
+
+  ;; triangulate.polygon: both .getTriangles return java.util.List<Geometry>,
+  ;; which needs list-extractor + JSArray wrap.
+  ;; The .compute() / static methods on both triangulators stay in scope.
+  org.locationtech.jts.triangulate.polygon.PolygonTriangulator
+  #{"getTriangles"}
+
+  ;; init(Collection<QuadEdgeTriangle>) — QuadEdgeTriangle
+  ;; is still whole-class skipped from AAA (no public ctor / internal).
+   org.locationtech.jts.triangulate.quadedge.EdgeConnectedTriangleTraversal
+  #{
+    ["init" ["org.locationtech.jts.triangulate.quadedge.QuadEdgeTriangle"]]
+    ["init" ["java.util.Collection"]]
+    ["visitAll" ["org.locationtech.jts.triangulate.quadedge.TraversalVisitor"]]
+    }
+
+  ;; QuadEdge.{getData, setData}: Object payload — irreducible at the JS
+  ;; boundary. Other QuadEdge Object overrides are caught by the auto-skip
+  ;; rule; these two are regular methods that take/return Object so the
+  ;; auto-rule doesn't apply.
+   org.locationtech.jts.triangulate.quadedge.QuadEdge
+  #{
+    ["getData" []]
+    ["setData" ["java.lang.Object"]]
+    }
+
+  ;; most QuadEdgeSubdivision QuadEdge/Vertex-param methods
+  ;; un-skipped (classify after QuadEdge + Vertex auto-ctor). Only
+  ;; the truly-internal callback/locator-interface methods stay here.
+  ;; getTriangleEdges takes a QuadEdge[] out-parameter that gets WRITTEN
+  ;; to (return is QuadEdge[] not void) — would need a separate
+  ;; "extract array, mutate, return mutated" shape that we don't have,
+  ;; so it stays narrow-skipped.
+   org.locationtech.jts.triangulate.quadedge.QuadEdgeSubdivision
+  #{
+    ["getTriangleEdges" ["org.locationtech.jts.triangulate.quadedge.QuadEdge" "org.locationtech.jts.triangulate.quadedge.QuadEdge[]"]]
+    ["setLocator" ["org.locationtech.jts.triangulate.quadedge.QuadEdgeLocator"]]
+    ["visitTriangles" ["org.locationtech.jts.triangulate.quadedge.TriangleVisitor" "boolean"]]
+    }
+
+   org.locationtech.jts.triangulate.quadedge.QuadEdgeTriangle
+  #{
+    ["<init>" ["org.locationtech.jts.triangulate.quadedge.QuadEdge[]"]]
+    ["contains" ["org.locationtech.jts.geom.Coordinate"]]
+    ["contains" ["org.locationtech.jts.triangulate.quadedge.QuadEdge[]" "org.locationtech.jts.geom.Coordinate"]]
+    ["contains" ["org.locationtech.jts.triangulate.quadedge.Vertex[]" "org.locationtech.jts.geom.Coordinate"]]
+    ["createOn" ["org.locationtech.jts.triangulate.quadedge.QuadEdgeSubdivision"]]
+    ["getAdjacentTriangleAcrossEdge" ["int"]]
+    ["getAdjacentTriangleEdgeIndex" ["int"]]
+    ["getCoordinate" ["int"]]
+    ["getCoordinates" []]
+    ["getData" []]
+    ["getEdge" ["int"]]
+    ["getEdgeIndex" ["org.locationtech.jts.triangulate.quadedge.Vertex"]]
+    ["getEdgeIndex" ["org.locationtech.jts.triangulate.quadedge.QuadEdge"]]
+    ["getEdgeSegment" ["int" "org.locationtech.jts.geom.LineSegment"]]
+    ["getEdges" []]
+    ["getGeometry" ["org.locationtech.jts.geom.GeometryFactory"]]
+    ["getNeighbours" []]
+    ["getTrianglesAdjacentToVertex" ["int"]]
+    ["getVertex" ["int"]]
+    ["getVertices" []]
+    ["isBorder" []]
+    ["isBorder" ["int"]]
+    ["isLive" []]
+    ["kill" []]
+    ["setData" ["java.lang.Object"]]
+    ["toPolygon" ["org.locationtech.jts.triangulate.quadedge.Vertex[]"]]
+    ["toPolygon" ["org.locationtech.jts.triangulate.quadedge.QuadEdge[]"]]
+    }
+
+  ;; Vector3D: every uncategorized entry was an Object override
+  ;; (equals/hashCode/toString); all three auto-skip's
+  ;; object-override classify rule. No per-class skip needed any more.
+
+  ;; TrianglePredicate.triAreaDD{Fast,Slow}: JTS double-double precision.
+  ;; org.locationtech.jts.math.DD is a 106-bit floating-point class with
+  ;; no native JS counterpart; mapping is theoretically possible (wrapper
+  ;; class) but the user need is minimal — these are JTS-internal
+  ;; numerical building blocks for robust predicates.
+  org.locationtech.jts.triangulate.quadedge.TrianglePredicate
+  #{"triAreaDDFast" "triAreaDDSlow"}
+
+  ;; triangulate.tri.Tri: self-referential adjacency setters,
+  ;; List<Tri> / List<Coordinate> exchange,
+  ;; Collection input to the static toGeometry helper. The user-facing
+  ;; Tri ctor + .getCoordinate / .getEdge / .area / .midpoint / etc.
+  ;; primitive-shape methods already classify (26 in-scope).
+  org.locationtech.jts.triangulate.tri.Tri
+  #{["area" ["java.util.List"]]
+    ["degree" ["int" "java.util.List"]]
+    ["getIndex" ["org.locationtech.jts.triangulate.tri.Tri"]]
+    ["isAdjacent" ["org.locationtech.jts.triangulate.tri.Tri"]]
+    ["remove" ["java.util.List"]]
+    ["setAdjacent" ["org.locationtech.jts.geom.Coordinate"
+                     "org.locationtech.jts.triangulate.tri.Tri"]]
+    ["setAdjacent" ["org.locationtech.jts.triangulate.tri.Tri"
+                     "org.locationtech.jts.triangulate.tri.Tri"
+                     "org.locationtech.jts.triangulate.tri.Tri"]]
+    ["setTri" ["int" "org.locationtech.jts.triangulate.tri.Tri"]]
+    ["toGeometry" ["java.util.Collection" "org.locationtech.jts.geom.GeometryFactory"]]
+    ["validate" ["java.util.List"]]}
+
+   org.locationtech.jts.util.Assert
+  #{
+    ["equals" ["java.lang.Object" "java.lang.Object"]]
+    ["equals" ["java.lang.Object" "java.lang.Object" "java.lang.String"]]
+    }
+
+  ;; JTS debugging utility — no value in JS surface.
+   org.locationtech.jts.util.Debug
+  #{
+    ["addWatch" ["java.lang.Object"]]
+    ["breakIfEqual" ["java.lang.Object" "java.lang.Object"]]
+    ["instancePrint" ["java.lang.Object"]]
+    ["instancePrint" ["java.util.Iterator"]]
+    ["instancePrintIfWatch" ["java.lang.Object"]]
+    ["instancePrintObject" ["java.lang.Object"]]
+    ["instancePrintWatch" []]
+    ["main" ["java.lang.String[]"]]
+    ["print" ["java.lang.Object"]]
+    ["print" ["boolean" "java.lang.Object"]]
+    ["printIfWatch" ["java.lang.Object"]]
+    ["println" []]
+    ["println" ["java.lang.Object"]]
+    }
+
+   org.locationtech.jts.util.ObjectCounter
+  #{
+    ["add" ["java.lang.Object"]]
+    ["count" ["java.lang.Object"]]
+    }
+
+   org.locationtech.jts.util.PriorityQueue
+  #{
+    ["add" ["java.lang.Comparable"]]
+    ["peek" []]
+    ["poll" []]
+    }
+
+   org.locationtech.jts.util.StringUtil
+  #{
+    ["getStackTrace" ["java.lang.Throwable"]]
+    ["getStackTrace" ["java.lang.Throwable" "int"]]
+    }
+
+   org.locationtech.jts.util.TestBuilderProxy
+  #{
+    ["showIndicator" ["org.locationtech.jts.geom.Geometry" "java.awt.Color"]]
+    }
+}
+
+ :test-skip
+ ;; Class symbol -> :all | #{method-name} | #{[method-name params-vec]}.
+ ;; Bare method-name skips all overloads; [name params] form skips one.
+ ;; Mixed sets are fine. Entries still get a Java dispatch + d.ts surface;
+ ;; only the differential test is suppressed.
+ {
+  ;; TrianglePredicate.isInCircleCC (Cartesian-Cartesian, the basic
+  ;; form) and isInCircleNonRobust are JTS's explicitly non-robust
+  ;; implementations. They disagree with the robust variants on
+  ;; near-collinear / numerically-eccentric triangles even within JTS
+  ;; itself; differential-testing them against the JS port adds no
+  ;; signal beyond rediscovering that non-robust predicates are non-
+  ;; robust. The six robust/normalized/DD variants stay in coverage.
+  org.locationtech.jts.triangulate.quadedge.TrianglePredicate
+  #{"isInCircleCC" "isInCircleNonRobust"}
+
+  ;; InteriorPointLine.getInteriorPoint picks the line vertex whose X
+  ;; ordinate is nearest the line's centroid X, with ties (and near-
+  ;; ties) broken by insertion order. A 2-point line has both endpoints
+  ;; exactly equidistant from the centroid X; with 3+ random vertices,
+  ;; FP rounding in the centroid computation occasionally flips the
+  ;; tie-break between JTS and the wasmts port. The InteriorPointPoint
+  ;; variant doesn't have this issue (a single Point IS its own
+  ;; interior point — no tie-break) and stays in coverage.
+  org.locationtech.jts.algorithm.InteriorPointLine #{"getInteriorPoint"}
+
+  ;; ---- Surfaced by the generic spec-form engine (emit_tests.clj) ----
+  ;; The generic template fills the coverage gap for {:kind ...} entries.
+  ;; A few newly-generated specs still aren't meaningful tests (no input to
+  ;; vary, a structural input precondition, 3D, or a real port divergence);
+  ;; those are quarantined here (dispatch + d.ts still ship) until fixed.
+
+  ;; NON-DIFFERENTIAL: runtime heap statistics. Comparing JVM heap to the
+  ;; WASM runtime's heap is meaningless and never matches. Memory.round
+  ;; (deterministic double rounding) stays in coverage.
+  org.locationtech.jts.util.Memory
+  #{"total" "used" "free" "totalString" "usedString" "freeString"
+    "allString" "usedTotalString"}
+
+  ;; (Tolerance / distance / ratio double params — Densifier, the
+  ;; simplifiers, MaximumInscribedCircle, ConcaveHullOfPolygons,
+  ;; DiscreteHausdorffDistance, etc. — used to live here. The generic
+  ;; engine now selects a domain-correct double generator by LVT param
+  ;; name (emit_tests.clj/double-gen-for: tolerance/length/radius ->
+  ;; gen-pos-coord, ratio/frac -> gen-unit-frac), so they generate valid
+  ;; input and stay in coverage. No quarantine needed.)
+
+  ;; (PolygonNodeTopology.isCrossing used to live here — RECOVERED 2026-06-01.
+  ;; It expects five coords forming a valid polygon node (two edges a0->node->a1
+  ;; and b0->node->b1 meeting at a shared node); independent random coords make
+  ;; JTS's Quadrant throw. Fixed with gen-polygon-node (the structured 5-coord
+  ;; tuple) supplied via :gen-tuple; port matches the oracle 0 mismatch / 400.
+  ;; See the :hints below.)
+  ;; (Octant.octant and Quadrant.quadrant used to live here — both RECOVERED
+  ;; 2026-06-01. They throw on a zero vector / identical points (p0 == p1), and
+  ;; gen-coord's 1e-10 magnitude clamp can collapse two independent draws to an
+  ;; equal coordinate pair. Fixed with gen-distinct-coordinate-pair supplied as
+  ;; the whole arg tuple via a :gen-tuple hint (c1 = c0 + non-zero offset); the
+  ;; port matches the oracle 0 mismatch / 400 each. See the :hints below.)
+
+  ;; Distance3DOp.distance / isWithinDistance RECOVERED 2026-06-01. Two issues,
+  ;; both fixed: (1) gen-wkt is 2D, so the geometry params are now pointed at
+  ;; gen-wkt-3d (3D points/lines) via :gen-overrides; (2) the harness shipped
+  ;; geometries through a dim-2 WKB writer, flattening the Z before the port
+  ;; saw it — jts->wasmts now ships Z-carrying geometries via a dim-3 writer
+  ;; (the port's WKBReader auto-detects the dimension). Port matches the JTS 3D
+  ;; oracle 0 fail / 400 for distance and isWithinDistance. nearestPoints stays
+  ;; quarantined: it returns a Coordinate[], and the port's result-return path
+  ;; (_writeWKB / _coordArrayXys) is dim-2, so the Z of the nearest points is
+  ;; dropped on the way back (a transport gap on the RETURN leg, not a port bug).
+  org.locationtech.jts.operation.distance3d.Distance3DOp #{"nearestPoints"}
+
+  ;; (Intersection.intersection/lineSegment and CGAlgorithmsDD.intersection
+  ;; on collinear/parallel coordinate quads used to live here: JTS returns
+  ;; null, the wasmts port NPE'd because createJSCoordinate dereferenced a
+  ;; null Coordinate. FIXED — API.createJSCoordinate is now null-safe
+  ;; (returns JS null), so a null result passes through and matches the
+  ;; oracle. Back in coverage.)
+
+  ;; CONSTRUCTION-METHOD TIE-BREAK / REPRESENTATION — NOT a port bug. A
+  ;; 2026-05-29 divergence investigation (N=1500/family, regular-vs-irregular
+  ;; polygon inputs, discrete-Hausdorff + scalar-invariant cross-checks)
+  ;; reclassified the construction families that failed the default
+  ;; .norm/.equalsExact compare. None is a port logic bug, and none is FP
+  ;; error in the OUTPUT value:
+  ;;   - VariableBuffer / OffsetCurve / Densifier emit a GEOMETRICALLY
+  ;;     IDENTICAL result (Hausdorff ~1e-14) that carries a near-coincident
+  ;;     vertex the JVM JTS collapses; .equalsExact is vertex-count-strict,
+  ;;     so it false-failed. (buffer(0) and a near-dup coordinate dedup do
+  ;;     NOT reconcile them — only a same-shape predicate does.) Now compared
+  ;;     via :compare :same-shape — back in coverage (validated 0 fail over
+  ;;     the divergent population at N=1200/family).
+  ;;   - MinimumClearance / SimpleMinimumClearance getLine, MinimumArea-
+  ;;     Rectangle, DouglasPeucker / VW simplify, LargestEmptyCircle
+  ;;     getRadiusLine return a NON-CANONICAL representative under the
+  ;;     symmetric gen-wkt regular n-gons (every candidate feature tied):
+  ;;     they agree on irregular inputs, and the scalar invariant the
+  ;;     algorithm actually determines (clearance distance / rectangle area /
+  ;;     circle radius) agrees to 1e-6. Now compared via :compare :length or
+  ;;     :area — back in coverage. (The getDistance variants already passed.)
+  ;; The per-method :compare assignments live in :hints below. CubicBezier-
+  ;; Curve.bezierCurve is now back in coverage (re-classified 2026-06-01);
+  ;; two entries stay quarantined.
+  ;;   - CubicBezierCurve.bezierCurve (RECOVERED 2026-06-01): the earlier
+  ;;     "FP-instability beyond 1e-6, extreme alpha crashes the port" reading
+  ;;     did not hold up on direct testing. The Web-Image port collapses the
+  ;;     three Java overloads into a single arity-3 JS function bezierCurve(
+  ;;     geom, alpha, skew); the 2-arg and (Geometry, Geometry) forms are
+  ;;     unreachable (a 2-arg call throws a CATCHABLE ClassCastException, not
+  ;;     a crash). dedup-by-path already keeps the 3-arg overload (highest
+  ;;     arity). Called with 3 args the port matches the JVM oracle to ~1e-15
+  ;;     discrete-Hausdorff for every alpha up to 632, and never crashes at
+  ;;     any alpha/skew tested (incl. 632/632). The only residual failures
+  ;;     were a rare symmetric-difference overlay flake at unbounded (+-1000)
+  ;;     alpha/skew. Bounding alpha to (0,1] and skew to [-1,1] via a
+  ;;     :gen-overrides hint gives 0 fail over 400 samples; recovered with
+  ;;     :compare :same-shape. See docs/plans/2026-05-29-divergence-followups.md.
+  ;; (TopologyPreservingSimplifier.simplify and LargestEmptyCircle.getCenter
+  ;; used to live here — both RECOVERED 2026-06-01, see the :hints below.
+  ;;   - TopologyPreservingSimplifier.simplify: at tolerance >> extent the
+  ;;     result collapses to a minimal topology-preserving triangle, and WHICH
+  ;;     triangle is a tie-break under gen-wkt's regular n-gons; the tied
+  ;;     triangles differ in both shape AND area, so neither :same-shape nor
+  ;;     :area reconciles them (10/400 fail under :same-shape on regular
+  ;;     input). Feeding an IRREGULAR (jittered-radius) polygon via
+  ;;     :gen-overrides breaks the symmetry: 0/400 divergent. Now :gen-overrides
+  ;;     {0 gen-irregular-wkt} + :compare :same-shape.
+  ;;   - LargestEmptyCircle.getCenter: the center lies on a symmetric locus
+  ;;     under regular obstacle/boundary polygons, so JTS and the port pick
+  ;;     genuinely DIFFERENT tied centers (demonstrated: concentric pentagons,
+  ;;     centers 117.5 apart) that no geometry compare reconciles. The only
+  ;;     agreeing invariant is the clearance = distance(center, obstacles) =
+  ;;     the LEC radius, identical at both tied centers. Now :compare
+  ;;     :clearance. (The radius is also covered by getRadiusLine's :length;
+  ;;     :clearance exercises the getCenter path directly.))
+
+  ;; KNOWN DIVERGENCE — BufferResultValidator.isValidMsg returns a human-
+  ;; readable String diagnostic; JTS and the wasmts port word the same
+  ;; validity verdict differently, so a string-equality compare is the
+  ;; wrong check (the isValid boolean is the real contract). TODO: compare
+  ;; isValid, or drop the message compare.
+  org.locationtech.jts.operation.buffer.validate.BufferResultValidator #{"isValidMsg"}
+
+  ;; nearestPoints returns the closest point PAIR as a Coordinate[2];
+  ;; coord-array-equal-form compares it order-strict. 2026-06-01 investigation:
+  ;; the alleged seed-dependent pair-order divergence does NOT reproduce on the
+  ;; current port — 0/400 over random gen-wkt and 0/3 over adversarial parallel-
+  ;; segment / stacked-polygon tie provocations (JTS and the port pick the same
+  ;; pair in the same order every time). Left quarantined because: (a) it can't
+  ;; be reproduced-and-fixed, so un-quarantining with the strict compare risks a
+  ;; rare unobserved flake, and (b) the Coordinate[] return is emitted by a
+  ;; dedicated spec template (not generic-spec), so an order-insensitive
+  ;; :compare override would need plumbing there, not the generic compare hook.
+  ;; Recover by adding that override OR after a larger sample confirms 0 divergence.
+  org.locationtech.jts.operation.distance.IndexedFacetDistance #{"nearestPoints"}
+  org.locationtech.jts.operation.distance.DistanceOp #{"nearestPoints"}}
+
+ :hints
+ {
+  ;; Per-method differential-compare overrides (:compare). The construction
+  ;; families below return geometry that is correct but not vertex-for-vertex
+  ;; identical to the JVM oracle; see the :test-skip note for the 2026-05-29
+  ;; investigation. :same-shape compares symmetric-difference / Hausdorff
+  ;; (port emits the same shape with a near-duplicate vertex). :length and
+  ;; :area compare the scalar the algorithm determines (clearance distance /
+  ;; circle radius, or rectangle / simplified area) rather than the tied
+  ;; non-canonical representative geometry.
+  {:class "org.locationtech.jts.operation.buffer.VariableBuffer"
+   :method "buffer"
+   :params ["org.locationtech.jts.geom.Geometry" "double" "double" "double"]}
+  {:compare :same-shape}
+  {:class "org.locationtech.jts.operation.buffer.OffsetCurve"
+   :method "getCurve"
+   :params ["org.locationtech.jts.geom.Geometry" "double"]}
+  {:compare :same-shape}
+  {:class "org.locationtech.jts.densify.Densifier"
+   :method "densify"
+   :params ["org.locationtech.jts.geom.Geometry" "double"]}
+  {:compare :same-shape}
+  {:class "org.locationtech.jts.precision.MinimumClearance"
+   :method "getLine"
+   :params ["org.locationtech.jts.geom.Geometry"]}
+  {:compare :length}
+  {:class "org.locationtech.jts.precision.SimpleMinimumClearance"
+   :method "getLine"
+   :params ["org.locationtech.jts.geom.Geometry"]}
+  {:compare :length}
+  {:class "org.locationtech.jts.algorithm.construct.LargestEmptyCircle"
+   :method "getRadiusLine"
+   :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry" "double"]}
+  {:compare :length}
+  {:class "org.locationtech.jts.algorithm.MinimumAreaRectangle"
+   :method "getMinimumRectangle"
+   :params ["org.locationtech.jts.geom.Geometry"]}
+  {:compare :area}
+  {:class "org.locationtech.jts.simplify.DouglasPeuckerSimplifier"
+   :method "simplify"
+   :params ["org.locationtech.jts.geom.Geometry" "double"]}
+  {:compare :area}
+  {:class "org.locationtech.jts.simplify.VWSimplifier"
+   :method "simplify"
+   :params ["org.locationtech.jts.geom.Geometry" "double"]}
+  {:compare :area}
+
+  ;; CubicBezierCurve.bezierCurve (3-arg: geom, alpha, skew). dedup-by-path
+  ;; keeps this highest-arity overload; the port only exposes the arity-3 JS
+  ;; function. :gen-overrides bounds alpha to (0,1] (gen-unit-frac) and skew to
+  ;; [-1,1] (gen-unit-signed) so the cubic stays in its in-domain band; the
+  ;; default gen-coord (+-1000) drives a rare symmetric-difference overlay
+  ;; flake. Compared with :same-shape (port matches the oracle to ~1e-15
+  ;; discrete-Hausdorff). See the :test-skip note for the 2026-06-01 recovery.
+  {:class "org.locationtech.jts.shape.CubicBezierCurve"
+   :method "bezierCurve"
+   :params ["org.locationtech.jts.geom.Geometry" "double" "double"]}
+  {:gen-overrides {1 gen-unit-frac 2 gen-unit-signed} :compare :same-shape}
+
+  ;; TopologyPreservingSimplifier.simplify: the minimal-triangle collapse at
+  ;; tolerance >> extent ties on regular n-gons (tied triangles differ in both
+  ;; shape and area). Feed an IRREGULAR polygon to break the symmetry, then
+  ;; :same-shape. See the :test-skip note for the 2026-06-01 recovery.
+  {:class "org.locationtech.jts.simplify.TopologyPreservingSimplifier"
+   :method "simplify"
+   :params ["org.locationtech.jts.geom.Geometry" "double"]}
+  {:gen-overrides {0 gen-irregular-wkt} :compare :same-shape}
+
+  ;; LargestEmptyCircle.getCenter (3-arg: obstacles, boundary, tolerance).
+  ;; dedup-by-path keeps this highest-arity overload. The center ties on a
+  ;; symmetric locus (JTS and the port pick genuinely different equivalent
+  ;; centers), so :clearance compares distance(center, obstacles) = the LEC
+  ;; radius, which is identical at both tied centers. :clearance reads the
+  ;; obstacles geom from the first geom param (a1-g). See the :test-skip note.
+  {:class "org.locationtech.jts.algorithm.construct.LargestEmptyCircle"
+   :method "getCenter"
+   :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry" "double"]}
+  {:compare :clearance}
+
+  ;; Distance3DOp.distance / isWithinDistance: 3D distance ops. Point both
+  ;; geometry params at gen-wkt-3d (3D points/lines); jts->wasmts ships them
+  ;; via a dim-3 WKB writer so the port sees the Z. Both return a scalar, so
+  ;; the default numeric/boolean compare applies. See the :test-skip note.
+  {:class "org.locationtech.jts.operation.distance3d.Distance3DOp"
+   :method "distance"
+   :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry"]}
+  {:gen-overrides {0 gen-wkt-3d 1 gen-wkt-3d}}
+  {:class "org.locationtech.jts.operation.distance3d.Distance3DOp"
+   :method "isWithinDistance"
+   :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry" "double"]}
+  {:gen-overrides {0 gen-wkt-3d 1 gen-wkt-3d}}
+
+  ;; Octant.octant / Quadrant.quadrant (Coordinate, Coordinate) throw on
+  ;; identical points; :gen-tuple supplies the whole [c0 c1] arg vector from
+  ;; gen-distinct-coordinate-pair (c1 = c0 + non-zero offset), guaranteeing
+  ;; distinct points. dedup-by-path keeps the Coordinate-pair overload.
+  {:class "org.locationtech.jts.noding.Octant"
+   :method "octant"
+   :params ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-distinct-coordinate-pair}
+  {:class "org.locationtech.jts.geom.Quadrant"
+   :method "quadrant"
+   :params ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-distinct-coordinate-pair}
+
+  ;; PolygonNodeTopology.isCrossing(nodePt, a0, a1, b0, b1): needs five coords
+  ;; forming a valid node (two edges meeting at nodePt). gen-polygon-node builds
+  ;; that structure; supplied as the whole arg tuple via :gen-tuple.
+  {:class "org.locationtech.jts.algorithm.PolygonNodeTopology"
+   :method "isCrossing"
+   :params ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-polygon-node}
+
+  ;; Default ctor naming is `createN` where N is the param count
+  ;; (see codegen-common/js-path). When two ctors share an arity the
+  ;; default collides and dedup-by-path picks one; spell each one
+  ;; explicitly here so neither is lost.
+
+  ;; CoordinateSequence-param static variants. The Coord[]
+  ;; overloads keep the default JS paths; CS variants get ...Seq suffixes
+  ;; to dodge dedup-by-path dropping one of the same-arity pair.
+  {:class  "org.locationtech.jts.algorithm.Area"
+   :method "ofRing"
+   :params ["org.locationtech.jts.geom.CoordinateSequence"]}
+  {:js-path "wasmts.algorithm.Area.ofRingSeq"}
+
+  {:class  "org.locationtech.jts.algorithm.Area"
+   :method "ofRingSigned"
+   :params ["org.locationtech.jts.geom.CoordinateSequence"]}
+  {:js-path "wasmts.algorithm.Area.ofRingSignedSeq"}
+
+  ;; wrapped-from-geom instance methods:
+  ;; each class has a static <method>(Geometry) convenience that beats
+  ;; the no-arg instance variant in dedup-by-path. Keep the static at the
+  ;; default path and route the instance variant to <method>Instance.
+  ;; The instance form is preserved for callers that want to construct
+  ;; once and reuse, though for these single-method wrappers the static
+  ;; is the natural choice.
+  {:class  "org.locationtech.jts.algorithm.Centroid"
+   :method "getCentroid"
+   :params []}
+  {:js-path "wasmts.algorithm.Centroid.getCentroidInstance"}
+
+  ;; CGAlgorithms3D 3D distance methods need two constraints that a
+  ;; per-param :gen-overrides can't express: (1) every Coordinate must
+  ;; have finite Z (default gen-coordinate's (x, y) ctor leaves Z=NaN),
+  ;; and (2) the segment endpoints can't coincide or JTS throws
+  ;; IllegalArgumentException on a degenerate segment. :gen-tuple
+  ;; supplies one generator that returns the whole param vector with
+  ;; both invariants satisfied. The 2-arg `distance(C, C)` is unaffected
+  ;; — Math.sqrt(NaN) = NaN on both sides, and close-enough? treats two
+  ;; NaNs as equal.
+  {:class  "org.locationtech.jts.algorithm.CGAlgorithms3D"
+   :method "distancePointSegment"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-distance-point-segment}
+
+  {:class  "org.locationtech.jts.algorithm.CGAlgorithms3D"
+   :method "distanceSegmentSegment"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-distance-segment-segment}
+
+  {:class  "org.locationtech.jts.algorithm.InteriorPointArea"
+   :method "getInteriorPoint"
+   :params []}
+  {:js-path "wasmts.algorithm.InteriorPointArea.getInteriorPointInstance"}
+
+  {:class  "org.locationtech.jts.algorithm.InteriorPointLine"
+   :method "getInteriorPoint"
+   :params []}
+  {:js-path "wasmts.algorithm.InteriorPointLine.getInteriorPointInstance"}
+
+  ;; InteriorPointPoint.getInteriorPoint returns null when the input
+  ;; geometry isn't a Point (the gen-wkt default produces polygons).
+  ;; The override gives it a real Point so JTS finds an interior point
+  ;; and the spec body's (.getX jts-result) doesn't NPE. The Line
+  ;; variant (InteriorPointLine.getInteriorPoint) needs a LineString
+  ;; input but flakes on FP-sensitive tie-breaking; it stays test-
+  ;; skipped (see the :test-skip section).
+  {:class  "org.locationtech.jts.algorithm.InteriorPointPoint"
+   :method "getInteriorPoint"
+   :params ["org.locationtech.jts.geom.Geometry"]}
+  {:gen-overrides {0 gen-point-wkt}}
+
+  {:class  "org.locationtech.jts.algorithm.InteriorPointPoint"
+   :method "getInteriorPoint"
+   :params []}
+  {:js-path "wasmts.algorithm.InteriorPointPoint.getInteriorPointInstance"}
+
+  {:class  "org.locationtech.jts.algorithm.MinimumDiameter"
+   :method "getMinimumDiameter"
+   :params ["org.locationtech.jts.geom.Geometry"]}
+  {:js-path "wasmts.algorithm.MinimumDiameter.getMinimumDiameterStatic"}
+
+  ;; MinimumDiameter parallel statics. Both collide with the
+  ;; no-arg instance methods (getMinimumRectangle / getMinimumDiameter,
+  ;; both return Geometry) on the default wasmts.algorithm.MinimumDiameter
+  ;; path. Route the statics to ...Static suffixes, matching the existing
+  ;; Triangle.areaStatic / centroidStatic pattern.
+  {:class  "org.locationtech.jts.algorithm.MinimumDiameter"
+   :method "getMinimumRectangle"
+   :params ["org.locationtech.jts.geom.Geometry"]}
+  {:js-path "wasmts.algorithm.MinimumDiameter.getMinimumRectangleStatic"}
+
+  {:class  "org.locationtech.jts.algorithm.Orientation"
+   :method "isCCW"
+   :params ["org.locationtech.jts.geom.CoordinateSequence"]}
+  {:js-path "wasmts.algorithm.Orientation.isCCWSeq"}
+
+  {:class  "org.locationtech.jts.algorithm.PointLocation"
+   :method "isOnLine"
+   :params ["org.locationtech.jts.geom.Coordinate" "org.locationtech.jts.geom.CoordinateSequence"]}
+  {:js-path "wasmts.algorithm.PointLocation.isOnLineSeq"}
+
+  ;; Builder ctor JS paths. Default ctor naming is `createN`
+  ;; (codegen-common/js-path), so each 1-arg builder ctor would install at
+  ;; `.create1`. The existing JS contract (and test-node.mjs) uses `.create`,
+  ;; so pin each builder ctor explicitly. No path collision since none of
+  ;; these classes have a 0-arg or other 1-arg ctor in scope.
+  {:class  "org.locationtech.jts.densify.Densifier"
+   :method "<init>"
+   :params ["org.locationtech.jts.geom.Geometry"]}
+  {:js-path "wasmts.densify.Densifier.create"}
+
+  ;; Coordinate.equals2D(Coord, double) — tolerance form.
+  ;; Collides with the existing equals2D(Coord) (no-tolerance) which is the
+  ;; JS contract. Keep the no-tolerance form at default; route the
+  ;; tolerance form to equals2DTolerance.
+  {:class  "org.locationtech.jts.geom.Coordinate"
+   :method "equals2D"
+   :params ["org.locationtech.jts.geom.Coordinate" "double"]}
+  {:js-path "wasmts.geom.Coordinate.equals2DTolerance"}
+
+  ;; Envelope arity-1 collides between Coordinate and Envelope param.
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "<init>"
+   :params ["org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Envelope.fromCoord"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "<init>"
+   :params ["org.locationtech.jts.geom.Envelope"]}
+  {:js-path "wasmts.geom.Envelope.fromCopy"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "contains"
+   :params ["double" "double"]}
+  {:js-path "wasmts.geom.Envelope.containsXY"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "contains"
+   :params ["org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Envelope.containsCoord"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "covers"
+   :params ["double" "double"]}
+  {:js-path "wasmts.geom.Envelope.coversXY"}
+
+  ;; Envelope arity-2 collides between (Coordinate, Coordinate) and
+  ;; (no others today). Keep the default `create2` path for it. No
+  ;; hint needed unless a second arity-2 ctor appears.
+  ;; Envelope instance-method overloads on covers/contains/intersects/
+  ;; overlaps: JTS provides (Envelope), (Coordinate), and (double, double)
+  ;; variants at the same JS path. Keep the Envelope variant at the
+  ;; default `wasmts.geom.Envelope.<method>` path; suffix `Coord` and
+  ;; `XY` for the Coordinate and double-double overloads.
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "covers"
+   :params ["org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Envelope.coversCoord"}
+
+  ;; Envelope.expandBy overloads: (double) is uniform expansion, (double, double)
+  ;; is asymmetric. Keep the 2-arg variant at the default path; suffix the
+  ;; uniform form so the OO wrapper can dispatch on arg count.
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "expandBy"
+   :params ["double"]}
+  {:js-path "wasmts.geom.Envelope.expandByUniform"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "expandToInclude"
+   :params ["double" "double"]}
+  {:js-path "wasmts.geom.Envelope.expandToIncludeXY"}
+
+  ;; Envelope.expandToInclude overloads: (Coordinate), (Envelope), and
+  ;; (double, double) at the same path. Keep Coordinate at the default
+  ;; (most common usage); suffix Envelope and XY for the others.
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "expandToInclude"
+   :params ["org.locationtech.jts.geom.Envelope"]}
+  {:js-path "wasmts.geom.Envelope.expandToIncludeEnvelope"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "init"
+   :params ["org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Envelope.initCoord"}
+
+  ;; Envelope.init overloads: many at the same path. Keep the no-arg
+  ;; default; suffix the others by their primary param shape.
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "init"
+   :params ["org.locationtech.jts.geom.Envelope"]}
+  {:js-path "wasmts.geom.Envelope.initEnvelope"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "intersects"
+   :params ["double" "double"]}
+  {:js-path "wasmts.geom.Envelope.intersectsXY"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "intersects"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Envelope.intersectsQuad"}
+
+  ;; Envelope static intersects: keep the instance
+  ;; intersects(Envelope) / intersects(Coordinate) / intersects(double, double)
+  ;; / intersects(Coordinate, Coordinate) variants at the default
+  ;; wasmts.geom.Envelope.intersects / intersectsCoord / intersectsXY paths.
+  ;; The 3-Coord (point-in-segment-bbox test) becomes intersectsTriangle;
+  ;; the 4-Coord (segment-bbox-vs-segment-bbox test) becomes intersectsQuad.
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "intersects"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Envelope.intersectsTriangle"}
+
+  ;; Envelope.intersects(Coord, Coord) — instance segment-vs-envelope-bbox test
+  ;;. Same 2-arg JS shape as the existing intersects(Envelope)
+  ;; instance variant (kept at default `wasmts.geom.Envelope.intersects`).
+  ;; Route the Coord-pair form to intersectsSegment.
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "intersects"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Envelope.intersectsSegment"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "intersects"
+   :params ["org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Envelope.intersectsCoord"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "overlaps"
+   :params ["double" "double"]}
+  {:js-path "wasmts.geom.Envelope.overlapsXY"}
+
+  {:class  "org.locationtech.jts.geom.Envelope"
+   :method "overlaps"
+   :params ["org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Envelope.overlapsCoord"}
+
+  ;; the three non-CSF Geometry.apply overloads sit at
+  ;; distinct JS paths since they'd otherwise collide on .apply with
+  ;; the CoordinateSequenceFilter form at wasmts.geom.apply.
+  {:class  "org.locationtech.jts.geom.Geometry"
+   :method "apply"
+   :params ["org.locationtech.jts.geom.CoordinateFilter"]}
+  {:js-path "wasmts.geom.applyCoord"}
+
+  {:class  "org.locationtech.jts.geom.Geometry"
+   :method "apply"
+   :params ["org.locationtech.jts.geom.GeometryComponentFilter"]}
+  {:js-path "wasmts.geom.applyComponent"}
+
+  {:class  "org.locationtech.jts.geom.Geometry"
+   :method "apply"
+   :params ["org.locationtech.jts.geom.GeometryFilter"]}
+  {:js-path "wasmts.geom.applyGeometry"}
+
+  ;; Geometry.compareTo(Object) / equals(Object): the JS contract
+  ;; always passes another Geometry, so the Object param coerces via
+  ;; extractGeometry rather than the (Object) aN fallback. The override
+  ;; also unblocks the hoisted {:kind :receiver-call} classifier rule's
+  ;; coercibility gate, so these route through the generic template
+  ;; instead of bespoke shapes.
+  {:class  "org.locationtech.jts.geom.Geometry"
+   :method "compareTo"
+   :params ["java.lang.Object"]}
+  {:param-override {0 "org.locationtech.jts.geom.Geometry"}}
+
+  {:class  "org.locationtech.jts.geom.Geometry"
+   :method "equals"
+   :params ["java.lang.Object"]}
+  {:param-override {0 "org.locationtech.jts.geom.Geometry"}}
+
+  ;; Geometry.relate has two overloads:
+  ;;   - relate(Geometry) returns IntersectionMatrix  (:geom*geom->im)
+  ;;   - relate(Geometry, String) returns boolean      (:geom*geom*string->bool)
+  ;; Both default to `wasmts.geom.relate`. dedup-by-path keeps the
+  ;; higher-arity 3-arg variant, dropping the 2-arg IM-returning form,
+  ;; which breaks the JS contract `wasmts.geom.relate(g1, g2) -> IM`.
+  ;; Pin the pattern variant to `relatePattern` so both coexist.
+  {:class  "org.locationtech.jts.geom.Geometry"
+   :method "relate"
+   :params ["org.locationtech.jts.geom.Geometry" "java.lang.String"]}
+  {:js-path "wasmts.geom.relatePattern"}
+
+  ;; Geometry.union() (no-arg) is JTS's unary-union form; Geometry.union(Geometry)
+  ;; is the binary form. Both classify as :geom->geom / :geom*geom->geom and
+  ;; default to the same `wasmts.geom.union` path. dedup-by-path keeps the
+  ;; higher-arity binary variant, dropping the no-arg. Pin the no-arg to
+  ;; `wasmts.geom.unaryUnion` so both coexist; the fluent shim's `g.union()`
+  ;; polymorphic dispatch routes a no-arg call to this path.
+  {:class  "org.locationtech.jts.geom.Geometry"
+   :method "union"
+   :params []}
+  {:js-path "wasmts.geom.unaryUnion"}
+
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createGeometryCollection"
+   :params []}
+  {:js-path "wasmts.geom.GeometryFactory.createGeometryCollectionEmpty"}
+
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createLinearRing"
+   :params []}
+  {:js-path "wasmts.geom.GeometryFactory.createLinearRingEmpty"}
+
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createLineString"
+   :params []}
+  {:js-path "wasmts.geom.GeometryFactory.createLineStringEmpty"}
+
+  ;; Multi-geometry and GeometryCollection empties. JTS exposes both a
+  ;; no-arg empty variant and a 1-arg array variant; the array variants
+  ;; auto-install at the canonical name, so the no-arg ones get an
+  ;; `Empty` suffix to coexist (same convention as createPointEmpty
+  ;; above).
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createMultiLineString"
+   :params []}
+  {:js-path "wasmts.geom.GeometryFactory.createMultiLineStringEmpty"}
+
+  ;; createMultiPoint(Coordinate[]) is the deprecated overload — the
+  ;; modern createMultiPoint takes Point[]. The deprecated form is
+  ;; preserved at a suffix path; the Point[] variant claims the
+  ;; canonical name.
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createMultiPoint"
+   :params ["org.locationtech.jts.geom.Coordinate[]"]}
+  {:js-path "wasmts.geom.GeometryFactory.createMultiPointDeprecated"}
+
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createMultiPoint"
+   :params []}
+  {:js-path "wasmts.geom.GeometryFactory.createMultiPointEmpty"}
+
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createMultiPolygon"
+   :params []}
+  {:js-path "wasmts.geom.GeometryFactory.createMultiPolygonEmpty"}
+
+  ;; GeometryFactory.createX() no-arg variants return empty geometries;
+  ;; the Coordinate[]/Coordinate-arg variants return populated geometries.
+  ;; Default `js-path` puts both arities at the same path and
+  ;; dedup-by-path silently drops the lower-arity (no-arg) one. Hint the
+  ;; no-arg variant to a `createXEmpty` path and let the populated
+  ;; variant keep the canonical name. Same convention as the LineSegment
+  ;; `Segment` suffix.
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createPoint"
+   :params []}
+  {:js-path "wasmts.geom.GeometryFactory.createPointEmpty"}
+
+  ;; createPolygon(LinearRing shell, LinearRing[] holes) shares the
+  ;; `createPolygon` path with createPolygon(Coordinate[]); the
+  ;; Coordinate[]-shell variant covers the no-holes case at the canonical
+  ;; name. Holes-shaped polygons go through `createPolygonWithHoles`,
+  ;; consuming pre-built LinearRing handles for shell + each hole.
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createPolygon"
+   :params ["org.locationtech.jts.geom.LinearRing"
+            "org.locationtech.jts.geom.LinearRing[]"]}
+  {:js-path "wasmts.geom.GeometryFactory.createPolygonWithHoles"}
+
+  ;; createPolygon(LinearRing) collides with createPolygon(Coordinate[]).
+  ;; The Coordinate[] form keeps the canonical `createPolygon` name since
+  ;; most callers won't already hold a LinearRing handle; the pre-built-
+  ;; shell variant takes the suffix `createPolygonFromShell`.
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createPolygon"
+   :params ["org.locationtech.jts.geom.LinearRing"]}
+  {:js-path "wasmts.geom.GeometryFactory.createPolygonFromShell"}
+
+  {:class  "org.locationtech.jts.geom.GeometryFactory"
+   :method "createPolygon"
+   :params []}
+  {:js-path "wasmts.geom.GeometryFactory.createPolygonEmpty"}
+
+  ;; IntersectionMatrix ctors: retire the bespoke `new`-able JS
+  ;; constructor; expose the three JTS ctors as named factories. create0
+  ;; keeps the default `wasmts.geom.IntersectionMatrix.create0` path.
+  {:class  "org.locationtech.jts.geom.IntersectionMatrix"
+   :method "<init>"
+   :params ["java.lang.String"]}
+  {:js-path "wasmts.geom.IntersectionMatrix.fromString"}
+
+  {:class  "org.locationtech.jts.geom.IntersectionMatrix"
+   :method "<init>"
+   :params ["org.locationtech.jts.geom.IntersectionMatrix"]}
+  {:js-path "wasmts.geom.IntersectionMatrix.fromCopy"}
+
+  ;; IntersectionMatrix.matches(String) is the instance pattern-check.
+  ;; The default JS path `wasmts.geom.IntersectionMatrix.matches` is
+  ;; already taken by the bespoke static matches(int, char) wired
+  ;; through exportIntersectionMatrixConstructor. Pin the instance to
+  ;; `matchesPattern` (parallel naming to relate/relatePattern) so both
+  ;; coexist; the fluent shim's `m.matches(pattern)` routes here.
+  {:class  "org.locationtech.jts.geom.IntersectionMatrix"
+   :method "matches"
+   :params ["java.lang.String"]}
+  {:js-path "wasmts.geom.IntersectionMatrix.matchesPattern"}
+
+  ;; IntersectionMatrix.set / setAtLeast each have a String variant
+  ;; (parse a 9-char pattern) and an (int, int, int) variant (assign
+  ;; one cell). Hint the String variants to distinct paths so both
+  ;; arities coexist; the fluent shim's `m.set(rowOrPattern, ...)`
+  ;; does its own typeof dispatch and calls .setFromString /
+  ;; .setAtLeastFromString as appropriate.
+  {:class  "org.locationtech.jts.geom.IntersectionMatrix"
+   :method "set"
+   :params ["java.lang.String"]}
+  {:js-path "wasmts.geom.IntersectionMatrix.setFromString"}
+
+  {:class  "org.locationtech.jts.geom.IntersectionMatrix"
+   :method "setAtLeast"
+   :params ["java.lang.String"]}
+  {:js-path "wasmts.geom.IntersectionMatrix.setAtLeastFromString"}
+
+  {:class  "org.locationtech.jts.geom.LineSegment"
+   :method "distance"
+   :params ["org.locationtech.jts.geom.LineSegment"]}
+  {:js-path "wasmts.geom.LineSegment.distanceSegment"}
+
+  ;; LineSegment.midPoint static collides with instance midPoint().
+  {:class  "org.locationtech.jts.geom.LineSegment"
+   :method "midPoint"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.LineSegment.midPointStatic"}
+
+  {:class  "org.locationtech.jts.geom.LineSegment"
+   :method "orientationIndex"
+   :params ["org.locationtech.jts.geom.LineSegment"]}
+  {:js-path "wasmts.geom.LineSegment.orientationIndexSegment"}
+
+  ;; LineSegment instance-method overloads at the same arity. Without
+  ;; these hints, dedup-by-path silently drops one variant per pair and
+  ;; the corresponding test calls a path bound to the other variant's
+  ;; dispatch. Convention: leave the more primitive arg form at the
+  ;; default path; suffix `Segment` for the LineSegment-arg variant.
+  {:class  "org.locationtech.jts.geom.LineSegment"
+   :method "project"
+   :params ["org.locationtech.jts.geom.LineSegment"]}
+  {:js-path "wasmts.geom.LineSegment.projectSegment"}
+
+  {:class  "org.locationtech.jts.geom.PrecisionModel"
+   :method "<init>"
+   :params ["double"]}
+  {:js-path "wasmts.geom.PrecisionModel.fromScale"}
+
+  {:class  "org.locationtech.jts.geom.PrecisionModel"
+   :method "<init>"
+   :params ["org.locationtech.jts.geom.PrecisionModel"]}
+  {:js-path "wasmts.geom.PrecisionModel.fromCopy"}
+
+  ;; PrecisionModel(PrecisionModel.Type) — typed factory. Replaces
+  ;; the bespoke precisionModelCreateJS polymorphic dispatch's string branch.
+  ;; coerce-arg-expr maps a JS string ("FLOATING"/"Floating"/"FIXED"/...)
+  ;; through API.precisionModelTypeFromName to the corresponding JTS Type
+  ;; constant. JS callers: PrecisionModel.fromType("FLOATING").
+  {:class  "org.locationtech.jts.geom.PrecisionModel"
+   :method "<init>"
+   :params ["org.locationtech.jts.geom.PrecisionModel$Type"]}
+  {:js-path "wasmts.geom.PrecisionModel.fromType"}
+
+  ;; Triangle parallel statics. Each has an instance counterpart at the
+  ;; same default JS path; without these hints, dedup-by-path silently
+  ;; drops one variant (the lower-arity instance, because static takes 3
+  ;; Coords while instance takes 0). Convention mirrors Vector3D: instance
+  ;; keeps the canonical name, statics suffix with `Static`. circumcentreDD
+  ;; has no instance variant so it keeps the default path.
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "area"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.areaStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "area3D"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.area3DStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "centroid"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.centroidStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "circumcentre"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.circumcentreStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "circumradius"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.circumradiusStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "inCentre"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.inCentreStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "interpolateZ"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.interpolateZStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "isAcute"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.isAcuteStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "isCCW"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.isCCWStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "length"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.lengthStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "longestSideLength"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.longestSideLengthStatic"}
+
+  {:class  "org.locationtech.jts.geom.Triangle"
+   :method "signedArea"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.geom.Triangle.signedAreaStatic"}
+
+  {:class  "org.locationtech.jts.geom.util.GeometryFixer"
+   :method "<init>"
+   :params ["org.locationtech.jts.geom.Geometry"]}
+  {:js-path "wasmts.geom.util.GeometryFixer.create"}
+
+  ;; GeometryFixer.fix has two static arities: (Geometry) and
+  ;; (Geometry, boolean) for keepMulti. Default `js-path` collides
+  ;; both at `.fix` and dedup-by-path drops the lower-arity. Hint
+  ;; the 2-arg variant to `.fixKeepMulti` so consumers can opt into
+  ;; the keepMulti override while the 1-arg form keeps the
+  ;; canonical name.
+  {:class  "org.locationtech.jts.geom.util.GeometryFixer"
+   :method "fix"
+   :params ["org.locationtech.jts.geom.Geometry" "boolean"]}
+  {:js-path "wasmts.geom.util.GeometryFixer.fixKeepMulti"}
+
+  ;; STRtree() and LineMerger() no-arg ctors. Default JS path would be
+  ;; `create0`; the JS contract uses `create`. Pin both explicitly.
+  {:class  "org.locationtech.jts.index.strtree.STRtree"
+   :method "<init>"
+   :params []}
+  {:js-path "wasmts.index.strtree.STRtree.create"}
+
+  ;; Divisor-style methods: their second arg (the divisor) cannot be
+  ;; zero. The default gen-coord / int generator includes 0. Per-param
+  ;; :gen-overrides points the specific divisor arg at a non-zero
+  ;; generator (gen-nz-coord for doubles, gen-nz-int for ints) so the
+  ;; specs no longer have to be test-skipped. Param indices are 0-based
+  ;; over the declared :params; the receiver (for Vector3D.divide) is
+  ;; separate and not counted.
+  {:class  "org.locationtech.jts.math.MathUtil"
+   :method "ceil"
+   :params ["int" "int"]}
+  {:gen-overrides {1 gen-nz-int}}
+
+  {:class  "org.locationtech.jts.math.MathUtil"
+   :method "wrap"
+   :params ["int" "int"]}
+  {:gen-overrides {1 gen-nz-int}}
+
+  {:class  "org.locationtech.jts.math.Vector3D"
+   :method "create"
+   :params ["double" "double" "double"]}
+  {:js-path "wasmts.math.Vector3D.createFromDoubles"}
+
+  ;; Vector3D parallel statics. Each method below has both a static
+  ;; and instance variant that would collide on the default JS path;
+  ;; dedup-by-path would silently drop one per pair. Convention:
+  ;; instance keeps the canonical name (dot, length, normalize),
+  ;; statics get a descriptive suffix. The two `create` statics
+  ;; collide with each other, so both are hinted.
+  {:class  "org.locationtech.jts.math.Vector3D"
+   :method "create"
+   :params ["org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.math.Vector3D.createFromCoordinate"}
+
+  {:class  "org.locationtech.jts.math.Vector3D"
+   :method "divide"
+   :params ["double"]}
+  {:gen-overrides {0 gen-nz-coord}}
+
+  {:class  "org.locationtech.jts.math.Vector3D"
+   :method "dot"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.math.Vector3D.dot4"}
+
+  {:class  "org.locationtech.jts.math.Vector3D"
+   :method "dot"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.math.Vector3D.dot2"}
+
+  {:class  "org.locationtech.jts.math.Vector3D"
+   :method "length"
+   :params ["org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.math.Vector3D.lengthStatic"}
+
+  {:class  "org.locationtech.jts.math.Vector3D"
+   :method "normalize"
+   :params ["org.locationtech.jts.geom.Coordinate"]}
+  {:js-path "wasmts.math.Vector3D.normalizeStatic"}
+
+  ;; OffsetCurve.getCurve: the 5-arg parametric overload
+  ;; (geom, dist, quadSegs, joinStyle, mitreLimit) collides on the default
+  ;; `wasmts.operation.buffer.OffsetCurve.getCurve` path with the 2-arg
+  ;; simple form. Pin the parametric form to `getCurveParametric`; the
+  ;; 2-arg keeps the default `getCurve` path.
+  {:class  "org.locationtech.jts.operation.buffer.OffsetCurve"
+   :method "getCurve"
+   :params ["org.locationtech.jts.geom.Geometry"
+            "double" "int" "int" "double"]}
+  {:js-path "wasmts.operation.buffer.OffsetCurve.getCurveParametric"}
+
+  ;; OffsetCurve.getCurve() instance. Collides with the
+  ;; static getCurve(Geometry, double) at the default
+  ;; wasmts.operation.buffer.OffsetCurve.getCurve. Keep the static at
+  ;; the default path (consistent with the rest of the static API) and
+  ;; route the instance to getCurveInstance.
+  {:class  "org.locationtech.jts.operation.buffer.OffsetCurve"
+   :method "getCurve"
+   :params []}
+  {:js-path "wasmts.operation.buffer.OffsetCurve.getCurveInstance"}
+
+  ;; DistanceOp.distance() instance. Collides with the static
+  ;; distance(Geom, Geom) overload at the default
+  ;; wasmts.operation.distance.DistanceOp.distance path. Keep the static at
+  ;; the default; route the instance to distanceInstance (mirrors the
+  ;; OffsetCurve.getCurveInstance pattern from PP).
+  {:class  "org.locationtech.jts.operation.distance.DistanceOp"
+   :method "distance"
+   :params []}
+  {:js-path "wasmts.operation.distance.DistanceOp.distanceInstance"}
+
+  {:class  "org.locationtech.jts.operation.linemerge.LineMerger"
+   :method "<init>"
+   :params []}
+  {:js-path "wasmts.operation.linemerge.LineMerger.create"}
+
+  {:class  "org.locationtech.jts.precision.GeometryPrecisionReducer"
+   :method "<init>"
+   :params ["org.locationtech.jts.geom.PrecisionModel"]}
+  {:js-path "wasmts.precision.GeometryPrecisionReducer.create"}
+
+  ;; GeometryPrecisionReducer.reduce(Geometry) instance variant collides
+  ;; with the static reduce(Geometry, PrecisionModel) at `.reduce` (both
+  ;; arity-2 once the receiver is counted; dedup-by-path picks one
+  ;; arbitrarily). Pin the instance variant to `.reduceInstance`, matching
+  ;; the existing test contract.
+  {:class  "org.locationtech.jts.precision.GeometryPrecisionReducer"
+   :method "reduce"
+   :params ["org.locationtech.jts.geom.Geometry"]}
+  {:js-path "wasmts.precision.GeometryPrecisionReducer.reduceInstance"}
+
+  ;; TrianglePredicate.isInCircle* predicates compare a fourth Coordinate
+  ;; against the circumcircle of the triangle defined by the first three.
+  ;; Independent gen-coordinate draws can yield coincident points at the
+  ;; 1e-10 clamp floor, putting the predicate at its singularity (JTS and
+  ;; the JS port can disagree on sign). gen-circle-quad pairs the four
+  ;; coordinates so the first three form a non-degenerate triangle and
+  ;; the fourth is distinct from each vertex. The two non-robust
+  ;; variants (isInCircleCC, isInCircleNonRobust) are :test-skip-ped above.
+  {:class  "org.locationtech.jts.triangulate.quadedge.TrianglePredicate"
+   :method "isInCircleDDFast"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-circle-quad}
+
+  {:class  "org.locationtech.jts.triangulate.quadedge.TrianglePredicate"
+   :method "isInCircleDDNormalized"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-circle-quad}
+
+  {:class  "org.locationtech.jts.triangulate.quadedge.TrianglePredicate"
+   :method "isInCircleDDSlow"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-circle-quad}
+
+  {:class  "org.locationtech.jts.triangulate.quadedge.TrianglePredicate"
+   :method "isInCircleNormalized"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-circle-quad}
+
+  {:class  "org.locationtech.jts.triangulate.quadedge.TrianglePredicate"
+   :method "isInCircleRobust"
+   :params ["org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"
+            "org.locationtech.jts.geom.Coordinate"]}
+  {:gen-tuple gen-circle-quad}
+
+  ;; Example: STRtree.query returns List<Object> at the bytecode level.
+  ;; Uncomment and adapt when the entry lands in the registry.
+  ;; {:class  "org.locationtech.jts.index.strtree.STRtree"
+  ;;  :method "query"
+  ;;  :params ["org.locationtech.jts.geom.Envelope"]}
+  ;; {:generic-hint {:returns {:element "java.lang.Object"}}}
+
+  }
+
+
+ :static-only-methods
+ ;; Class symbol -> #{method-name} | #{[method-name params-vec]}.
+ ;; Per-method opt-in for static methods on value-type classes (Triangle,
+ ;; LineSegment) that aren't on the static-utility-classes whitelist.
+ ;; Without this, only the instance receiver shapes pick up; the parallel
+ ;; statics stay :uncategorized.
+ ;;
+ ;; A classified entry still has to dodge a JS-path collision with any
+ ;; instance variant. Entries here without a corresponding :hints :js-path
+ ;; either need to be on a method with no instance counterpart
+ ;; (Triangle.angleBisector) or accept that dedup-by-path will drop one.
+ {
+  ;; MinimumAreaRectangle.getMinimumRectangle(Geometry): static convenience
+  ;; that constructs and runs the algorithm in one call. No instance variant
+  ;; of the same name, so no :js-path hint is needed.
+  org.locationtech.jts.algorithm.MinimumAreaRectangle #{"getMinimumRectangle"}
+
+  ;; MinimumDiameter parallel statics. Both collide with same-named instance
+  ;; methods on the no-arg side; :hints :js-path entries route the statics
+  ;; to ...Static suffixes (mirrors Triangle.areaStatic / .centroidStatic).
+  org.locationtech.jts.algorithm.MinimumDiameter
+  #{["getMinimumRectangle" ["org.locationtech.jts.geom.Geometry"]]
+    ["getMinimumDiameter" ["org.locationtech.jts.geom.Geometry"]]}
+
+  ;; CoverageUnion.union(Geometry[]): JTS-recommended entry point for
+  ;; unioning a polygonal coverage. Class isn't in :static-utility-classes
+  ;; (private ctor + one static), so opt-in here. No JS-path collision.
+  org.locationtech.jts.coverage.CoverageUnion #{"union"}
+
+  ;; Densifier.densify(Geometry, double): JTS-recommended one-shot for
+  ;; densifying a geometry without managing the instance/builder state.
+  ;; Class isn't in :static-utility-classes (mixes instance setters with
+  ;; the static convenience), so opt-in here. No JS-path collision with
+  ;; the instance methods (setDistanceTolerance / setValidate /
+  ;; getResultGeometry classify on different names).
+  org.locationtech.jts.densify.Densifier #{"densify"}
+
+  ;; Envelope static intersects predicates. The 3-Coord (point-in-segment-
+  ;; bbox) and 4-Coord (segment-vs-segment-bbox) forms collide with the
+  ;; same-named Envelope instance .intersects(...) variants on the default
+  ;; wasmts.geom.Envelope.intersects path; :hints route them to
+  ;; intersectsTriangle / intersectsQuad.
+  org.locationtech.jts.geom.Envelope
+  #{["intersects" ["org.locationtech.jts.geom.Coordinate"
+                   "org.locationtech.jts.geom.Coordinate"
+                   "org.locationtech.jts.geom.Coordinate"]]
+    ["intersects" ["org.locationtech.jts.geom.Coordinate"
+                   "org.locationtech.jts.geom.Coordinate"
+                   "org.locationtech.jts.geom.Coordinate"
+                   "org.locationtech.jts.geom.Coordinate"]]}
+
+  ;; IntersectionMatrix.isTrue(int) tests whether a dimension value
+  ;; represents a non-empty intersection. The bespoke @JS constructor for
+  ;; IntersectionMatrix in API.java keeps its function-object form; the
+  ;; auto-gen register pass installs .isTrue as a property on that function
+  ;; object (JS allows static props on functions). No path collision.
+  org.locationtech.jts.geom.IntersectionMatrix
+  #{"isTrue" ["matches" ["int" "char"]]}
+
+  ;; LineSegment.midPoint static collides with the instance variant; the
+  ;; :hints :js-path entry puts the static at midPointStatic.
+  org.locationtech.jts.geom.LineSegment #{"midPoint"}
+
+  ;; PrecisionModel.mostPrecise(PM, PM) static. PM isn't in
+  ;; static-utility-classes (it's a wrapped class with instance API);
+  ;; per-method opt-in via :static-pm*pm->pm shape.
+  org.locationtech.jts.geom.PrecisionModel #{"mostPrecise"}
+
+  ;; Triangle statics. angleBisector / circumcentreDD / intersects have no
+  ;; instance counterpart so they keep the default JS path; the rest
+  ;; collide with same-named instance methods and rely on :hints :js-path
+  ;; entries (areaStatic, centroidStatic, etc.).
+  org.locationtech.jts.geom.Triangle
+  #{"angleBisector" "area" "area3D" "centroid" "circumcentre"
+    "circumcentreDD" "circumradius" "inCentre" "interpolateZ"
+    "intersects" "isAcute" "isCCW" "length" "longestSideLength"
+    "signedArea"}
+
+  ;; PreparedGeometryFactory.prepare(Geometry): JTS-recommended static
+  ;; entry for constructing a PreparedGeometry. Instance .create(Geometry)
+  ;; on a factory handle exists but the JS surface uses the static. No
+  ;; JS-path collision.
+  org.locationtech.jts.geom.prep.PreparedGeometryFactory #{"prepare"}
+
+  ;; GeometryFixer.fix has two static arities — (Geometry) and
+  ;; (Geometry, boolean) for keepMulti. Both opt in here; the 2-arg
+  ;; variant gets a :hints :js-path entry below (fixKeepMulti) so
+  ;; dedup-by-path doesn't drop one of them. Instance ctor + setters +
+  ;; getResult classify independently.
+  org.locationtech.jts.geom.util.GeometryFixer #{"fix"}
+
+  ;; Vector3D parallel statics: create / dot / length / normalize. Each has
+  ;; a corresponding instance variant; matching :hints :js-path entries
+  ;; keep them at distinct JS paths so dedup doesn't drop either side.
+  org.locationtech.jts.math.Vector3D #{"create" "dot" "length" "normalize"}
+
+  ;; BufferParameters.bufferDistanceError(int) static utility.
+  org.locationtech.jts.operation.buffer.BufferParameters #{"bufferDistanceError"}
+
+  ;; CascadedPolygonUnion.union(Collection<Geometry>): JTS static entry
+  ;; point. Classifies as :static-collection->geom; dispatch wraps the JS
+  ;; array via Arrays.asList(extractGeometryArray(...)). The instance side
+  ;; (private ctor + private internals) stays out of scope.
+  org.locationtech.jts.operation.union.CascadedPolygonUnion #{"union"}
+
+  ;; GeometryPrecisionReducer parallel statics: reduce / reduceKeepCollapsed /
+  ;; reducePointwise. Each takes (Geometry, PrecisionModel) and rounds
+  ;; coordinates per the model's scale. The instance reduce(Geometry)
+  ;; collides on .reduce with the static; a :hints :js-path below pins
+  ;; the instance to .reduceInstance. The other two statics have no
+  ;; instance counterpart so they keep the default JS path.
+  org.locationtech.jts.precision.GeometryPrecisionReducer
+  #{"reduce"            ; static reduce(Geometry, PrecisionModel)
+    "reduceKeepCollapsed" "reducePointwise"}
+
+  ;; DouglasPeuckerSimplifier.simplify(Geometry, double): static one-shot
+  ;; (instance/builder side :skip-listed above). Classifies as
+  ;; :static-geom*double->geom; installs at the canonical
+  ;; wasmts.simplify.DouglasPeuckerSimplifier.simplify path matching the
+  ;; previously hand-written export. No JS-path collision.
+  org.locationtech.jts.simplify.DouglasPeuckerSimplifier #{"simplify"}}
+
+ :extra-dts
+ ;; Map from JS path -> raw TS signature for bespoke @JS exports that aren't
+ ;; in the registry, or whose runtime contract is incompatible with what
+ ;; auto-gen would emit. Injected as synthetic leaves in emit_dts's
+ ;; functional path tree; do NOT appear on any OO interface.
+ {
+  ;; wasmts-specific helper (no JTS counterpart): rewrites a geometry's
+  ;; coordinates from a flat numeric array. Lives bespoke in API.java
+  ;; because no JTS method has this signature; the d.ts only needs the
+  ;; type declaration to surface it to TS consumers.
+  "wasmts.geom.applyCoordinates"
+  "applyCoordinates(geometry: Geometry, coords: Float64Array | number[], stride: number): Geometry;"
+
+  ;; Geometry.getCoordinates() returns [{x, y, z?, m?}, ...] plain JS objects
+  ;; in this codebase (not wrapped Coordinate handles), for fast iteration in
+  ;; JS hot loops. The TS interface `Coordinate` is a branded opaque handle
+  ;; (no x/y properties), so declaring the return as `Coordinate[]` would
+  ;; force `as unknown as Coordinate[]` casts to read .x/.y. The
+  ;; :geom->coordarray dispatch emits the plain-object array via
+  ;; API.coordsToPlainArrayJS.
+  "wasmts.geom.getCoordinates"
+  "getCoordinates(geometry: Geometry): { x: number; y: number; z?: number; m?: number }[];"}
+
+ ;; Manual element-type annotations for raw java.util.List / Collection
+ ;; params and returns. JTS pre-dates Java generics in most signatures,
+ ;; so getGenericParameterTypes returns the same erased form as
+ ;; getParameterTypes. These hints tell the classifier which concrete
+ ;; element type the call expects/returns, so List/Collection params
+ ;; become coercible (Arrays.asList(extractGeometryArray) etc.) and
+ ;; returns wrap via createJS<X>List.
+ ;;
+ ;; Shape:
+ ;;   <class-symbol>
+ ;;   {[<method-str> [<erased-params...>]]
+ ;;    {:params  {<index> "<elem-type-fqn>"}     ; per-position elem types
+ ;;     :returns "<elem-type-fqn>"}}            ; elem type when return is raw List/Coll
+ ;;
+ ;; build_registry/apply-elem-type-hint merges these into :generic-params
+ ;; and :returns :generic-type at classify time; the classifier then
+ ;; reads effective generic types when deciding coercibility.
+ :elem-type
+ {org.locationtech.jts.geom.CoordinateList
+  {["addAll" ["java.util.Collection" "boolean"]]
+   {:params {0 "org.locationtech.jts.geom.Coordinate"}}}
+
+  org.locationtech.jts.geom.util.GeometryCombiner
+  {["combine" ["java.util.Collection"]]
+   {:params {0 "org.locationtech.jts.geom.Geometry"}}
+   ["extractFactory" ["java.util.Collection"]]
+   {:params {0 "org.locationtech.jts.geom.Geometry"}}
+   ["<init>" ["java.util.Collection"]]
+   {:params {0 "org.locationtech.jts.geom.Geometry"}}}
+
+  org.locationtech.jts.geom.util.LinearComponentExtracter
+  {["getLines" ["org.locationtech.jts.geom.Geometry"]]
+   {:returns "org.locationtech.jts.geom.LineString"}
+   ["getLines" ["org.locationtech.jts.geom.Geometry" "boolean"]]
+   {:returns "org.locationtech.jts.geom.LineString"}
+   ["getLines" ["org.locationtech.jts.geom.Geometry" "java.util.Collection"]]
+   {:params  {1 "org.locationtech.jts.geom.LineString"}
+    :returns "org.locationtech.jts.geom.LineString"}
+   ["getLines" ["org.locationtech.jts.geom.Geometry" "java.util.Collection" "boolean"]]
+   {:params  {1 "org.locationtech.jts.geom.LineString"}
+    :returns "org.locationtech.jts.geom.LineString"}
+   ;; getLines(Collection geoms, Collection lines) — first param is the
+   ;; input Geometry collection, second is the destination for accumulated
+   ;; LineStrings.
+   ["getLines" ["java.util.Collection" "java.util.Collection"]]
+   {:params  {0 "org.locationtech.jts.geom.Geometry"
+              1 "org.locationtech.jts.geom.LineString"}
+    :returns "org.locationtech.jts.geom.LineString"}
+   ["getLines" ["java.util.Collection" "java.util.Collection" "boolean"]]
+   {:params  {0 "org.locationtech.jts.geom.Geometry"
+              1 "org.locationtech.jts.geom.LineString"}
+    :returns "org.locationtech.jts.geom.LineString"}}
+
+  org.locationtech.jts.geom.util.LineStringExtracter
+  {["getLines" ["org.locationtech.jts.geom.Geometry"]]
+   {:returns "org.locationtech.jts.geom.LineString"}
+   ["getLines" ["org.locationtech.jts.geom.Geometry" "java.util.List"]]
+   {:params  {1 "org.locationtech.jts.geom.LineString"}
+    :returns "org.locationtech.jts.geom.LineString"}}
+
+  ;; spatial-index .query() returns are List<Object> in JTS; the user-
+  ;; inserted objects pass straight through to JS without any wrap. The
+  ;; java.util.List<java.lang.Object> entry in wrap-return-direct-types
+  ;; covers both Quadtree and SIRtree below.
+  org.locationtech.jts.index.quadtree.Quadtree
+  {["query" ["org.locationtech.jts.geom.Envelope"]]
+   {:returns "java.lang.Object"}
+   ["queryAll" []]
+   {:returns "java.lang.Object"}}
+
+  org.locationtech.jts.index.strtree.SIRtree
+  {["query" ["double"]]
+   {:returns "java.lang.Object"}
+   ["query" ["double" "double"]]
+   {:returns "java.lang.Object"}}
+
+  org.locationtech.jts.triangulate.DelaunayTriangulationBuilder
+  {["envelope" ["java.util.Collection"]]
+   {:params {0 "org.locationtech.jts.geom.Coordinate"}}
+   ["setSites" ["java.util.Collection"]]
+   {:params {0 "org.locationtech.jts.geom.Coordinate"}}
+   ;; toVertices is Collection<Coordinate> in / List<Vertex> out — both
+   ;; ends need hints.
+   ["toVertices" ["java.util.Collection"]]
+   {:params  {0 "org.locationtech.jts.geom.Coordinate"}
+    :returns "org.locationtech.jts.triangulate.quadedge.Vertex"}}
+
+  ;; QuadEdgeSubdivision returns. All raw List / Collection with QuadEdge /
+  ;; Vertex / Polygon element types (the last treated as Geometry —
+  ;; wrap-return-templates handles List<Geometry> for any subtype via
+  ;; createJSGeometryList's dynamic getGeometryType()).
+  org.locationtech.jts.triangulate.quadedge.QuadEdgeSubdivision
+  {["getEdges" []]
+   {:returns "org.locationtech.jts.triangulate.quadedge.QuadEdge"}
+   ["getFrameEdges" []]
+   {:returns "org.locationtech.jts.triangulate.quadedge.QuadEdge"}
+   ["getPrimaryEdges" ["boolean"]]
+   {:returns "org.locationtech.jts.triangulate.quadedge.QuadEdge"}
+   ["getVertexUniqueEdges" ["boolean"]]
+   {:returns "org.locationtech.jts.triangulate.quadedge.QuadEdge"}
+   ["getVertices" ["boolean"]]
+   {:returns "org.locationtech.jts.triangulate.quadedge.Vertex"}
+   ["getVoronoiCellPolygons" ["org.locationtech.jts.geom.GeometryFactory"]]
+   {:returns "org.locationtech.jts.geom.Geometry"}
+   ;; nested-array returns. The hint element type is the ARRAY type
+   ;; (Coordinate[] / QuadEdge[] / Vertex[]); apply-elem-type-hint splices
+   ;; it into List<...> to match the wrap-return-templates entry for
+   ;; "java.util.List<...[]>".
+   ["getTriangleCoordinates" ["boolean"]]
+   {:returns "org.locationtech.jts.geom.Coordinate[]"}
+   ["getTriangleEdges" ["boolean"]]
+   {:returns "org.locationtech.jts.triangulate.quadedge.QuadEdge[]"}
+   ["getTriangleVertices" ["boolean"]]
+   {:returns "org.locationtech.jts.triangulate.quadedge.Vertex[]"}}
+
+  org.locationtech.jts.triangulate.VertexTaggedGeometryDataMapper
+  {["getCoordinates" []]
+   {:returns "org.locationtech.jts.geom.Coordinate"}
+   ;; Collection<Geometry> source-geom loader.
+   ["loadSourceGeometries" ["java.util.Collection"]]
+   {:params {0 "org.locationtech.jts.geom.Geometry"}}}
+
+  org.locationtech.jts.triangulate.VoronoiDiagramBuilder
+  {["setSites" ["java.util.Collection"]]
+   {:params {0 "org.locationtech.jts.geom.Coordinate"}}}}}

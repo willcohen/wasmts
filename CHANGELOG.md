@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file. This change
 log follows the conventions of [keepachangelog.com](http://keepachangelog.com/).
 
+## [0.1.0-alpha5] - 2026-06-24
+
+The API is now code-generated from a JTS reflection registry. Test coverage of
+the generated surface is still growing; this remains an alpha.
+
+### Added
+
+- Generated API surface across the algorithm, coverage, densify, geom, index,
+  io, math, operation, and precision packages, emitted from a JTS reflection
+  registry along with the TypeScript declarations (`wasmts.d.ts`).
+- Generative differential test suite that cross-checks the WebAssembly build
+  against JVM JTS with property-based tests.
+
+### Changed
+
+- Replaced the hand-maintained JavaScript bridge with code generated from the
+  registry.
+
 ## [0.1.0-alpha4] - 2026-03-11
 
 ### Added
@@ -58,7 +76,8 @@ Proof of concept: JTS Topology Suite 1.20.0 compiled to WebAssembly using GraalV
 - Browser and Node.js compatible
 - Interactive demo with Monaco editor
 
-[Unreleased]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha4...HEAD
-[0.1.0-alpha4]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha2...0.1.0-alpha4
+[Unreleased]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha5...HEAD
+[0.1.0-alpha5]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha4...0.1.0-alpha5
+[0.1.0-alpha4]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha3...0.1.0-alpha4
 [0.1.0-alpha3]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha2...0.1.0-alpha3
 [0.1.0-alpha2]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha1...0.1.0-alpha2

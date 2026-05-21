@@ -1,0 +1,39 @@
+{:min-bb-version "1.3.0"
+
+ :paths ["script"]
+
+ :tasks
+ {:requires ([babashka.process :as p]
+             [babashka.fs :as fs])
+
+  registry
+  {:doc "Reflect JTS classes and emit registry.edn"
+   :task (shell "clojure" "-X:registry")}
+
+  reflect:dump
+  {:doc "Print reflection output to stdout (no file write) for inspection"
+   :task (shell "clojure" "-X:reflect-dump")}
+
+  gen:api
+  {:doc "Emit API_Generated.java from registry.edn"
+   :depends [registry]
+   :task (shell "clojure" "-X:emit-api")}
+
+  gen:tests
+  {:doc "Emit wasmts/differential/generated.cljc from registry.edn"
+   :depends [registry]
+   :task (shell "clojure" "-X:emit-tests")}
+
+  gen:dts
+  {:doc "Emit dist/wasmts.d.ts from registry.edn"
+   :depends [registry]
+   :task (shell "clojure" "-X:emit-dts")}
+
+  gen:all
+  {:doc "Regenerate every artifact derived from registry.edn"
+   :depends [gen:api gen:tests gen:dts]}
+
+  test
+  {:doc "Run JVM test suite (oracle + differential harness)"
+   :depends [gen:tests]
+   :task (shell "clojure" "-M:test")}}}

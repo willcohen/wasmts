@@ -6,7 +6,7 @@
 
     <groupId>net.willcohen</groupId>
     <artifactId>wasmts</artifactId>
-    <version>0.1.0-alpha4</version>
+    <version>0.1.0-alpha5</version>
     <packaging>jar</packaging>
 
     <name>WasmTS</name>
@@ -121,12 +121,26 @@
                 </executions>
             </plugin>
 
-            <!-- Exec Maven Plugin - Run native-image -->
+            <!-- Exec Maven Plugin - Regenerate API_Generated.java + run native-image -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
                 <executions>
+                    <execution>
+                        <id>gen-api</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>bb</executable>
+                            <arguments>
+                                <argument>gen:api</argument>
+                            </arguments>
+                            <workingDirectory>${project.basedir}</workingDirectory>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>build-wasm</id>
                         <phase>package</phase>

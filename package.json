@@ -1,6 +1,6 @@
 {
   "name": "@wcohen/wasmts",
-  "version": "0.1.0-alpha4",
+  "version": "0.1.0-alpha5",
   "description": "A WebAssembly port of [JTS (Java Topology Suite)](https://github.com/locationtech/jts) using **GraalVM Native Image** with web-image backend.",
   "homepage": "https://github.com/willcohen/wasmts#readme",
   "bugs": {
@@ -14,6 +14,7 @@
   "author": "Will Cohen",
   "type": "module",
   "main": "dist/wasmts.js",
+  "types": "dist/wasmts.d.ts",
   "scripts": {
     "build:wasm": "mvn package",
     "build:js": "node js/build.mjs",
@@ -25,8 +26,13 @@
   "files": [
     "dist/wasmts.js",
     "dist/wasmts.js.wasm",
+    "dist/wasmts.d.ts",
     "LICENSE_EPLv2.txt",
     "LICENSE_EDLv1.txt",
+    "LICENSE_Apache-2.0.txt",
+    "LICENSE_GraalVM-CE.txt",
+    "LICENSE_UPL-1.0.txt",
+    "THIRD_PARTY_NOTICES.md",
     "README.md",
     "CHANGELOG.md"
   ],
