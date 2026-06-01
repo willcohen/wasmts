@@ -37,6 +37,18 @@
   {:doc "Do a check of each @see anchor in types/wasmts.d.ts against the live JTS javadoc. Needs network access, thus it is not part of gen:all or CI."
    :task (shell "node" "scripts/check-javadoc-links.mjs")}
 
+  demo
+  {:doc "Serve docs/ against the local dist/ build (not the CDN pin). Optional port arg, e.g. `bb demo 8001`."
+   :task (apply shell "node" "scripts/demo-server.mjs" *command-line-args*)}
+
+  demo-cdn
+  {:doc "Serve docs/ verbatim against the published CDN pins (what GitHub Pages serves). Optional port arg, e.g. `bb demo-cdn 8001`."
+   :task (apply shell "node" "scripts/demo-server.mjs" "--cdn" *command-line-args*)}
+
+  demo-check
+  {:doc "Run every docs/examples.js entry through the demo eval handler in headless Chromium. Flags: --local (in-tree dist), --url URL (running server)."
+   :task (apply shell "node" "scripts/demo-examples-check.mjs" *command-line-args*)}
+
   test
   {:doc "Run JVM test suite (oracle + differential harness)"
    :depends [gen:tests]

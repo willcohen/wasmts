@@ -5,34 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Interactive demo of WasmTS - Spatial operations and computational geometry for WebAssembly. Try geometry operations, spatial indexing, and 3D/4D coordinates in your browser.">
     <title>WasmTS - Spatial Operations for WebAssembly</title>
-    <script>
-      if ('caches' in window) {
-        caches.keys().then(names => names.forEach(n => caches.delete(n)));
-      }
-      window.coi = {
-        shouldRegister: () => localStorage.getItem('coi-disabled') !== 'true',
-        shouldDeregister: () => localStorage.getItem('coi-disabled') === 'true',
-        quiet: false
-      };
-    </script>
-    <script src="coi-serviceworker.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.20.0/dist/maplibre-gl.css">
     <link rel="stylesheet" href="styles.css">
     <script type="importmap">
 {
   "imports": {
-    "cherry-cljs/cljs.core.js": "https://cdn.jsdelivr.net/npm/cherry-cljs@0.5.33/lib/cljs.core.js",
-    "cherry-cljs/lib/clojure.string.js": "https://cdn.jsdelivr.net/npm/cherry-cljs@0.5.33/lib/clojure.string.js",
-    "resource-tracker": "https://cdn.jsdelivr.net/npm/resource-tracker@0.0.1-alpha1/resource.mjs",
-    "proj-wasm": "https://cdn.jsdelivr.net/npm/proj-wasm@0.1.0-alpha7/dist/proj.mjs",
+    "squint-cljs/core.js": "https://cdn.jsdelivr.net/npm/squint-cljs@0.14.208/core.js",
+    "squint-cljs/src/squint/string.js": "https://cdn.jsdelivr.net/npm/squint-cljs@0.14.208/src/squint/string.js",
+    "resource-tracker": "https://cdn.jsdelivr.net/npm/resource-tracker@0.0.1/resource.mjs",
+    "worker-router": "https://cdn.jsdelivr.net/npm/@wcohen/worker-router@0.0.2/dist/index.mjs",
+    "worker-router/worker-bootstrap": "https://cdn.jsdelivr.net/npm/@wcohen/worker-router@0.0.2/dist/worker-bootstrap.mjs",
+    "comlink": "https://cdn.jsdelivr.net/npm/comlink@4.4.2/dist/esm/comlink.mjs",
+    "ffi-wasm/handler-runtime": "https://cdn.jsdelivr.net/npm/ffi-wasm@0.0.1/src/cljc/net/willcohen/native/handler_runtime.mjs",
+    "ffi-wasm/pool": "https://cdn.jsdelivr.net/npm/ffi-wasm@0.0.1/src/cljc/net/willcohen/native/pool.mjs",
+    "ffi-wasm/workload-pool": "https://cdn.jsdelivr.net/npm/ffi-wasm@0.0.1/src/cljc/net/willcohen/native/workload_pool.mjs",
+    "proj-wasm": "https://cdn.jsdelivr.net/npm/proj-wasm@0.1.0-alpha10/dist/proj.mjs",
     "maplibre-gl": "https://esm.sh/maplibre-gl@5.20.0?bundle-deps",
-    "backproj": "https://cdn.jsdelivr.net/npm/backproj@0.0.3/dist/backproj.mjs",
-    "maplibre-proj": "https://cdn.jsdelivr.net/npm/maplibre-proj@0.0.3/dist/maplibre-proj.mjs",
+    "backproj": "https://cdn.jsdelivr.net/npm/backproj@0.0.5/dist/backproj.mjs",
+    "maplibre-proj": "https://cdn.jsdelivr.net/npm/maplibre-proj@0.0.5/dist/maplibre-proj.mjs",
     "lru-cache": "https://cdn.jsdelivr.net/npm/lru-cache@11.2.6/dist/esm/index.js",
     "pbf": "https://esm.sh/pbf@4.0.1",
     "@mapbox/vector-tile": "https://esm.sh/@mapbox/vector-tile@2.0.4",
-    "vt-pbf": "https://esm.sh/vt-pbf@3.1.3"
+    "@wcohen/wasmts": "https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha7/dist/wasmts.js"
   }
 }
     </script>
@@ -105,15 +100,20 @@
                 <option value="geometry">Geometry Methods (Operations, Predicates, Transformations)</option>
                 <option value="buffer">Buffering (Simple and Advanced)</option>
                 <option value="strtree">STRtree Spatial Index</option>
+                <option value="quadtree">Quadtree Spatial Index</option>
+                <option value="nearest">STRtree Nearest Neighbors</option>
                 <option value="prepared">PreparedGeometry (Optimized Predicates)</option>
                 <option value="rectangles">Minimum Bounding Rectangles & Circles</option>
                 <option value="offsetcurve">Offset Curves</option>
                 <option value="linemerger">LineMerger</option>
+                <option value="polygonizer">Polygonizer (polygons from linework)</option>
                 <option value="cascadedunion">CascadedPolygonUnion</option>
                 <option value="3d">3D Geometries (XYZ)</option>
                 <option value="4d">4D Geometries (XYZM)</option>
                 <option value="io">WKT/WKB I/O</option>
                 <option value="geojson">GeoJSON I/O</option>
+                <option value="flatbuffers">Flat-Buffer Geometry (fromFlat / toFlat)</option>
+                <option value="formats">KML & TWKB I/O</option>
                 <option value="polyaccessors">Polygon Accessors (Rings & Holes)</option>
                 <option value="distance">Distance Operations (nearest points)</option>
                 <option value="factory">Geometry Factory (create from coords)</option>
@@ -127,6 +127,7 @@
                 <option value="precisionmodel">PrecisionModel</option>
                 <option value="precisionreducer">GeometryPrecisionReducer</option>
                 <option value="dimension">Dimension Constants</option>
+                <option value="errors">Error Handling (Java to JS Errors)</option>
             </select>
         </div>
         <div id="visualizationSection">
@@ -147,13 +148,15 @@
         <div id="replOutput"></div>
     </section>
 
-    <!-- Load Monaco Editor -->
+    <section id="apiReferenceSection">
+        <h2>API Reference</h2>
+        <p style="font-size:13px; margin-bottom:8px">Every <code>wasmts.*</code> entry from the generated type definitions. Editor autocomplete is backed by the same <code>.d.ts</code>. Click any method or constant to insert it at the cursor.</p>
+        <input type="text" id="apiSearch" placeholder="Filter the API (e.g. buffer, WKTReader, getArea)..." autocomplete="off" disabled>
+        <div id="apiStatus" class="api-status">Loading API surface...</div>
+        <div id="apiTree" class="api-tree"></div>
+    </section>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
-
-    <!-- Load the WASM module -->
-    <script src="https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha4/dist/wasmts.js"></script>
-
-    <!-- Load examples -->
     <script src="examples.js"></script>
 
     <!-- Init backproj/maplibre for visualization -->
@@ -176,22 +179,59 @@
 
       try {
         const proj = await import('proj-wasm');
-        const { initProj } = await import('backproj');
+        const { createTileProcessor } = await import('backproj');
+        const { worker_call } = await import('ffi-wasm/pool');
+        const {
+          make_wiring_BANG_, ensure_wired_BANG_, register_handler_BANG_,
+        } = await import('ffi-wasm/workload-pool');
         const { reprojectStyle } = await import('maplibre-proj');
         const { Map: MapGL, importScriptInWorkers } = await import('maplibre-gl');
 
         importScriptInWorkers('data:text/javascript,');
-        await initProj();
 
-        // Store shared refs for reconfiguration
+        // wasmts.js URL from this page's own importmap, so the CDN page and
+        // the demo-server's local rewrite resolve identically.
+        const wasmtsJsUrl = new URL(JSON.parse(
+          document.querySelector('script[type="importmap"]').textContent,
+        ).imports['@wcohen/wasmts'], location.href).href;
+
+        // No main-thread wasmts: every wasmts call runs on a worker.
+        // createTileProcessor comes FIRST: it builds the visualization pool
+        // (proj + wasmts handlers) and initializes proj-wasm onto it, so the
+        // main-thread `proj` API dispatches there and maplibre-proj's
+        // reprojectStyle reuses it (module singleton). A bare initProj here
+        // would strand every PJ on a pool the tile chain never targets.
+        await createTileProcessor({ wasmtsUrl: wasmtsJsUrl });
+
+        // The REPL eval handler runs on its OWN single-worker clj-native
+        // pool: backproj 0.0.5 dropped the extraHandlers hook, and arbitrary
+        // `new Function` eval has no place co-resident with the tile
+        // pipeline anyway. The one extra worker carries its own wasmts
+        // instance, loaded by the handler at init.
+        const EVAL_KEY = 'net.willcohen.demo.eval';
+        const evalWiring = make_wiring_BANG_();
+        const evalPool = await ensure_wired_BANG_(evalWiring, {
+          'registry-opts': { size: 1 },
+          'register!': (registry) => {
+            register_handler_BANG_(registry, 'compute', EVAL_KEY, {
+              module: new URL('./demo-pool-eval-handler.mjs', import.meta.url).href,
+              args: { wasmtsJsUrl },
+            });
+          },
+        });
+        window._replPool = evalPool;
+        window._workerCall = worker_call;
+        window._replEvalKey = EVAL_KEY;
+
         window._projRefs = { proj, reprojectStyle, MapGL };
 
-        // Load CRS catalog for the picker
-        const catalog = await proj.getCrsInfoListFromDatabase({ auth_name: '', types: [15] });
+        // projGetCrsInfoListFromDatabase takes snake_case input opts but
+        // returns camelCase keys (authName).
+        const catalog = await proj.projGetCrsInfoListFromDatabase({ auth_name: '', types: [15] });
         const seen = new Set();
         window._projectedCRS = catalog.filter(e => {
           if (e.deprecated) return false;
-          const key = `${e.auth_name}:${e.code}`;
+          const key = `${e.authName}:${e.code}`;
           if (seen.has(key)) return false;
           seen.add(key);
           return true;
@@ -243,13 +283,11 @@
         window._applyProjection = applyProjection;
         await applyProjection(DEFAULT_CRS, DEFAULT_ORIGIN_LON, DEFAULT_ORIGIN_LAT);
 
-        // Initialize picker UI
         const configEl = document.getElementById('projConfig');
         configEl.style.display = '';
         document.getElementById('origin-lon').value = DEFAULT_ORIGIN_LON;
         document.getElementById('origin-lat').value = DEFAULT_ORIGIN_LAT;
 
-        // CRS search/dropdown
         const crsSearchInput = document.getElementById('crs-search');
         const crsDropdown = document.getElementById('crs-dropdown');
         const crsChip = document.getElementById('crs-chip');
@@ -257,7 +295,7 @@
         const crsChipName = document.getElementById('crs-chip-name');
         let crsDebounce = null, crsActiveIdx = -1, crsFiltered = [];
 
-        const initialEntry = window._projectedCRS.find(e => `${e.auth_name}:${e.code}` === DEFAULT_CRS);
+        const initialEntry = window._projectedCRS.find(e => `${e.authName}:${e.code}` === DEFAULT_CRS);
         crsChipCode.textContent = DEFAULT_CRS;
         crsChipName.textContent = initialEntry ? initialEntry.name : '';
         crsChip.style.display = 'block';
@@ -266,7 +304,7 @@
           const q = query.toLowerCase();
           const results = [];
           for (const e of window._projectedCRS) {
-            const id = `${e.auth_name}:${e.code}`.toLowerCase();
+            const id = `${e.authName}:${e.code}`.toLowerCase();
             const name = (e.name || '').toLowerCase();
             if (q && !id.includes(q) && !name.includes(q)) continue;
             results.push(e);
@@ -284,7 +322,7 @@
             const entry = crsFiltered[i];
             const item = document.createElement('div');
             item.className = 'crs-dropdown-item' + (i === crsActiveIdx ? ' active' : '');
-            const code = `${entry.auth_name}:${entry.code}`;
+            const code = `${entry.authName}:${entry.code}`;
             item.innerHTML = `<span class="crs-code">${escapeHtml(code)}</span><span class="crs-name">${escapeHtml(entry.name || '')}</span>`;
             item.addEventListener('mousedown', (ev) => { ev.preventDefault(); selectCRS(i); });
             crsDropdown.appendChild(item);
@@ -295,7 +333,7 @@
         async function selectCRS(idx) {
           if (idx < 0 || idx >= crsFiltered.length) return;
           const entry = crsFiltered[idx];
-          const code = `${entry.auth_name}:${entry.code}`;
+          const code = `${entry.authName}:${entry.code}`;
           crsDropdown.style.display = 'none';
           crsSearchInput.value = '';
           crsChipCode.textContent = code;
@@ -365,16 +403,30 @@
     </script>
 
     <script>
-        // ===================================================================
-        // Monaco Editor Setup
-        // ===================================================================
+        // Monaco editor setup
         require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' }});
 
         let monacoEditor = null;
 
         require(['vs/editor/editor.main'], function() {
+            // Drive IntelliSense from the generated wasmts.d.ts (fetched below)
+            // rather than a hand-maintained list. The editor is a REPL with
+            // top-level await, so validation is off; we want completions only.
+            const tsDefaults = monaco.languages.typescript.javascriptDefaults;
+            tsDefaults.setCompilerOptions({
+                target: monaco.languages.typescript.ScriptTarget.ES2020,
+                allowNonTsExtensions: true,
+                lib: ['es2020', 'dom']
+            });
+            tsDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: true });
+            // visualization() is a demo helper, not part of the package surface.
+            tsDefaults.addExtraLib(
+                'declare function visualization(groups: Record<string, any[]>): Promise<void>;\n',
+                'ts:wasmts-demo-globals.d.ts');
+            loadWasmtsTypes();
+
             monacoEditor = monaco.editor.create(document.getElementById('replInput'), {
-                value: `// Try some commands:\nconst point = wasmts.geom.createPoint(0, 0);\nconst buffered = point.buffer(500);\nconsole.log('Area:', buffered.getArea().toFixed(2), 'sq ft');\n\nawait visualization({"Point": [point], "Buffer (500 ft)": [buffered]})`,
+                value: `// A GeometryFactory creates geometries; ops are fluent on the result.\nconst f = wasmts.geom.GeometryFactory.create0();\nconst point = wasmts.geom.GeometryFactory.createPoint(f, {x: 0, y: 0});\nconst buffered = point.buffer(500);\nconsole.log('Area:', buffered.getArea().toFixed(2), 'sq ft');\n\n// Or parse WKT: wasmts.io.WKTReader.create0().read('POINT (0 0)')\nawait visualization({"Point": [point], "Buffer (500 ft)": [buffered]})`,
                 language: 'javascript',
                 theme: 'vs-dark',
                 minimap: { enabled: false },
@@ -388,49 +440,30 @@
             monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, function() {
                 runREPL();
             });
-
-            monaco.languages.registerCompletionItemProvider('javascript', {
-                provideCompletionItems: function(model, position) {
-                    const suggestions = [
-                        { label: 'wasmts', kind: monaco.languages.CompletionItemKind.Module, insertText: 'wasmts', documentation: 'WasmTS root namespace' },
-                        { label: 'wasmts.geom', kind: monaco.languages.CompletionItemKind.Module, insertText: 'wasmts.geom', documentation: 'Geometry operations' },
-                        { label: 'wasmts.io', kind: monaco.languages.CompletionItemKind.Module, insertText: 'wasmts.io', documentation: 'I/O operations' },
-                        { label: 'wasmts.index.strtree', kind: monaco.languages.CompletionItemKind.Module, insertText: 'wasmts.index.strtree', documentation: 'Spatial indexing' },
-                        { label: 'visualization', kind: monaco.languages.CompletionItemKind.Function, insertText: 'visualization({${1:"Input"}: [${2:geom}], ${3:"Result"}: [${4:result}]})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: 'Visualize geometry groups on map' },
-                        { label: 'createPoint', kind: monaco.languages.CompletionItemKind.Function, insertText: 'createPoint(${1:x}, ${2:y})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
-                        { label: 'createLineString', kind: monaco.languages.CompletionItemKind.Function, insertText: 'createLineString(${1:coords})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
-                        { label: 'createPolygon', kind: monaco.languages.CompletionItemKind.Function, insertText: 'createPolygon(${1:shell}, ${2:holes})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
-                        { label: 'buffer', kind: monaco.languages.CompletionItemKind.Method, insertText: 'buffer(${1:distance})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
-                        { label: 'union', kind: monaco.languages.CompletionItemKind.Method, insertText: 'union(${1:other})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
-                        { label: 'intersection', kind: monaco.languages.CompletionItemKind.Method, insertText: 'intersection(${1:other})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
-                        { label: 'readWKT', kind: monaco.languages.CompletionItemKind.Function, insertText: 'readWKT(${1:wkt})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
-                        { label: 'writeWKT', kind: monaco.languages.CompletionItemKind.Function, insertText: 'writeWKT(${1:geom})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
-                    ];
-                    return { suggestions: suggestions };
-                }
-            });
         });
 
-        // ===================================================================
-        // WasmTS Init
-        // ===================================================================
+        // WasmTS init
         console.log('Waiting for WASM initialization...');
         waitForWasmTS();
 
         function waitForWasmTS() {
-            const maxAttempts = 50;
+            // No main-thread wasmts: readiness means the worker pool is up
+            // (createTileProcessor resolved and set window._replPool). The
+            // visualization-init module sets _replPool on success and dispatches
+            // 'visualization-init-done' when it finishes (success or SVG fallback).
+            const maxAttempts = 600; // pool spawn + proj.db load + 14MB wasmts per worker
             let attempts = 0;
             const checkInterval = setInterval(() => {
                 attempts++;
-                if (typeof wasmts !== 'undefined' && wasmts.geom) {
+                if (window._replPool) {
                     clearInterval(checkInterval);
-                    console.log('WasmTS initialized!');
+                    console.log('wasmts worker pool ready');
                     onWasmTSReady();
-                } else if (attempts >= maxAttempts) {
+                } else if (window._visualizationInitDone || attempts >= maxAttempts) {
                     clearInterval(checkInterval);
                     const status = document.getElementById('loadStatus');
                     status.className = 'error';
-                    status.textContent = 'Timeout waiting for WasmTS initialization. Check browser console.';
+                    status.textContent = 'Worker pool did not initialize (wasmts runs on the pool). Check the browser console.';
                 }
             }, 100);
         }
@@ -459,12 +492,9 @@
             }
         }
 
-        // Update status when visualization init completes
         window.addEventListener('visualization-init-done', checkAllReady);
 
-        // ===================================================================
-        // Visualization Infrastructure
-        // ===================================================================
+        // Visualization
         const VISUALIZATION_PALETTE = [
             { fill: '#e74c3c', stroke: '#c0392b' },
             { fill: '#2ecc71', stroke: '#27ae60' },
@@ -548,15 +578,18 @@
             catch(e) { return null; }
         }
 
-        // Main visualization function - available in REPL
-        window.visualization = async function(groups) {
+        // Render the GeoJSON groups returned by the worker's visualization()
+        // shim. The snippet's visualization({label:[geom]}) ran on a pool worker,
+        // which serialized each live geometry to GeoJSON via GeoJsonWriter; the
+        // main thread only ever sees GeoJSON (live handles can't cross the worker
+        // boundary). runREPL passes the worker's `groups` here.
+        window.renderVisualizationGroups = async function(gjGroups) {
             const groupEntries = [];
             let ci = 0;
-            for (const [label, geoms] of Object.entries(groups)) {
+            for (const [label, gjGeoms] of Object.entries(gjGroups || {})) {
                 const color = VISUALIZATION_PALETTE[ci % VISUALIZATION_PALETTE.length];
                 ci++;
-                const gjGeoms = geoms.map(geomToGJ).filter(Boolean);
-                groupEntries.push({ label, gjGeoms, color, geoms });
+                groupEntries.push({ label, gjGeoms: (gjGeoms || []).filter(Boolean), color });
             }
 
             if (window._visualizationTools) {
@@ -582,7 +615,6 @@
         async function visualizationWithMap(groupEntries) {
             const { originX, originY, toWGS84, reprojectStyle, MapGL } = window._visualizationTools;
 
-            // Offset coords to EPSG:2249 and collect for batch transform
             const allCoords = [];
             for (const { gjGeoms } of groupEntries) {
                 for (const gj of gjGeoms) {
@@ -597,10 +629,8 @@
                 })))
             );
 
-            // Batch transform EPSG:2249 -> WGS84
             const wgs84 = await toWGS84(allCoords);
 
-            // Apply transformed coords back
             const state = { i: 0 };
             for (const { gjGeoms } of groupEntries) {
                 for (const gj of gjGeoms) {
@@ -608,7 +638,6 @@
                 }
             }
 
-            // Build coordinate grid in user-space, transform to WGS84
             let userMinX = Infinity, userMinY = Infinity, userMaxX = -Infinity, userMaxY = -Infinity;
             for (const c of allCoords) {
                 const ux = c[0] - originX, uy = c[1] - originY;
@@ -647,7 +676,6 @@
                 ]}
             }));
 
-            // Build MapLibre style with vector tile base map
             const sources = {};
             const layers = [];
             let glyphs = undefined;
@@ -794,7 +822,6 @@
             let globalMinZ = Infinity, globalMaxZ = -Infinity;
             let hasZ = false;
 
-            // Detect Z range from preserved coordinate metadata
             if (coordMetaPerGroup) {
                 for (const groupMeta of coordMetaPerGroup) {
                     for (const featureMeta of groupMeta) {
@@ -912,7 +939,6 @@
                 });
             }
 
-            // Wire up toolbar buttons
             document.getElementById('visualizationZoomExtent').onclick = () => {
                 if (visualizationMap && visualizationBounds) {
                     visualizationMap.fitBounds(visualizationBounds, { animate: true, padding: 40 });
@@ -929,7 +955,6 @@
                 });
             };
 
-            // Hover tooltip
             const tooltip = document.getElementById('visualizationTooltip');
             const groupLabels = groupEntries.map(e => e.label);
             const hoverLayers = [];
@@ -1002,7 +1027,6 @@
             const info = document.getElementById('visualizationInfo');
             info.textContent = 'SVG fallback (backproj not available). Coordinates in original units.';
 
-            // Compute bounds from all GeoJSON geometries
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             for (const { gjGeoms } of groupEntries) {
                 for (const gj of gjGeoms) {
@@ -1098,9 +1122,7 @@
             }
         }
 
-        // ===================================================================
-        // REPL Functionality
-        // ===================================================================
+        // REPL
         const replOutput = document.getElementById('replOutput');
 
         function replLog(text, type = 'output') {
@@ -1158,41 +1180,44 @@
 
             replLog('> ' + code.split('\n').join('\n  '), 'input');
 
+            if (!window._replPool) {
+                replLog('Error: worker pool not ready. wasmts runs on the pool; '
+                    + 'check the init logs above.', 'error');
+                replLog('', 'output');
+                return;
+            }
+
             try {
-                const logs = [];
-                const originalLog = console.log;
-                console.log = function(...args) {
-                    logs.push(args.map(arg => formatValue(arg) || String(arg)).join(' '));
-                    originalLog.apply(console, args);
-                };
+                // The snippet runs on a pool worker against that worker's wasmts.
+                // Live geometry handles stay in the worker; only captured console
+                // output, a stringified result, and any geometry passed to
+                // visualization() (serialized to GeoJSON) come back.
+                const out = await window._workerCall(
+                    window._replPool, window._replEvalKey, 'evalSnippet', [code]);
 
-                // Wrap in async IIFE to support await (for visualization())
-                const asyncCode = `(async () => {\n${code}\n})()`;
-                const result = await eval(asyncCode);
-
-                console.log = originalLog;
-                logs.forEach(log => replLog(log, 'output'));
-
-                if (result !== undefined) {
-                    const formatted = formatValue(result);
-                    if (formatted) replLog(formatted, 'output');
+                (out.logs || []).forEach(log => replLog(log, 'output'));
+                if (out.error) {
+                    replLog('Error: ' + out.error, 'error');
+                } else if (out.result !== undefined) {
+                    replLog(out.result, 'output');
+                }
+                if (out.groups) {
+                    await window.renderVisualizationGroups(out.groups);
                 }
             } catch (err) {
-                replLog(`Error: ${err.message}`, 'error');
+                replLog('Error: ' + ((err && err.message) || err), 'error');
                 console.error(err);
             }
 
             replLog('', 'output');
         }
 
-        // Dropdown handler
         document.getElementById('exampleSelect').addEventListener('change', (e) => {
             if (!monacoEditor) return;
             const exampleKey = e.target.value;
             if (!exampleKey || !examples[exampleKey]) return;
 
             document.getElementById('replClear').click();
-            // Hide visualization when loading new example
             document.getElementById('visualizationSection').style.display = 'none';
             monacoEditor.setValue(examples[exampleKey]);
             monacoEditor.focus();
@@ -1206,6 +1231,209 @@
         });
 
         document.getElementById('replClear').click();
+
+        // wasmts.d.ts -> Monaco IntelliSense + API browser
+        function wasmtsDtsUrl() {
+            // Resolve wasmts.d.ts next to whichever wasmts.js the importmap points
+            // at, so types track the loaded runtime (CDN pin, a future bump, or a
+            // local /vendor swap under bb demo). wasmts now runs only on the pool
+            // workers, so there's no main-thread <script> to read -- use the
+            // importmap's @wcohen/wasmts entry (falling back to a tag if present).
+            const im = document.querySelector('script[type="importmap"]');
+            if (im) {
+                try {
+                    const u = JSON.parse(im.textContent || '').imports?.['@wcohen/wasmts'];
+                    if (u) return new URL(u, location.href).href.replace(/wasmts\.js(\?.*)?$/, 'wasmts.d.ts');
+                } catch {}
+            }
+            const tag = document.querySelector('script[src*="wasmts.js"]');
+            return tag ? tag.src.replace(/wasmts\.js(\?.*)?$/, 'wasmts.d.ts') : null;
+        }
+
+        async function loadWasmtsTypes() {
+            const statusEl = document.getElementById('apiStatus');
+            const url = wasmtsDtsUrl();
+            if (!url) { if (statusEl) statusEl.textContent = 'Could not locate wasmts.d.ts.'; return; }
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const dts = await res.text();
+                monaco.languages.typescript.javascriptDefaults.addExtraLib(dts, 'ts:wasmts.d.ts');
+                buildApiBrowser(dts);
+            } catch (e) {
+                console.warn('wasmts.d.ts load failed (' + url + '):', e.message);
+                if (statusEl) statusEl.textContent = 'API surface unavailable (could not fetch wasmts.d.ts).';
+            }
+        }
+
+        // Parse `declare global { const wasmts: { ... } }` into a tree of
+        // { name, kind: 'ns'|'method'|'field', children?, signature? } by
+        // indentation. emit_dts.clj's formatting is stable (2 spaces/level).
+        function parseWasmtsDts(dts) {
+            const lines = dts.split('\n');
+            let i = lines.findIndex(function (l) { return /const wasmts:\s*\{/.test(l); });
+            if (i < 0) return null;
+            const root = { name: 'wasmts', kind: 'ns', children: [] };
+            const stack = [root];
+            for (i = i + 1; i < lines.length; i++) {
+                const line = lines[i];
+                const parent = stack[stack.length - 1];
+                let m;
+                if ((m = line.match(/^\s*([A-Za-z0-9_$]+):\s*\{\s*$/))) {
+                    const node = { name: m[1], kind: 'ns', children: [] };
+                    parent.children.push(node);
+                    stack.push(node);
+                } else if ((m = line.match(/^\s*([A-Za-z0-9_$]+)\((.*)\):\s*(.+);\s*$/))) {
+                    parent.children.push({ name: m[1], kind: 'method', params: m[2], signature: m[1] + '(' + m[2] + '): ' + m[3] });
+                } else if ((m = line.match(/^\s*([A-Za-z0-9_$]+):\s*(.+);\s*$/))) {
+                    parent.children.push({ name: m[1], kind: 'field', signature: m[1] + ': ' + m[2] });
+                } else if (/^\s*\};?\s*$/.test(line)) {
+                    stack.pop();
+                    if (stack.length === 0) break;
+                }
+            }
+            return root;
+        }
+
+        let apiTreeRoot = null;
+
+        function apiPath(parent, name) { return parent ? parent + '.' + name : name; }
+
+        function countApiNodes(node, acc) {
+            acc = acc || { ns: 0, method: 0, field: 0 };
+            (node.children || []).forEach(function (c) {
+                if (c.kind === 'ns') { acc.ns++; countApiNodes(c, acc); }
+                else acc[c.kind]++;
+            });
+            return acc;
+        }
+
+        function buildApiBrowser(dts) {
+            apiTreeRoot = parseWasmtsDts(dts);
+            const treeEl = document.getElementById('apiTree');
+            const statusEl = document.getElementById('apiStatus');
+            const searchEl = document.getElementById('apiSearch');
+            if (!apiTreeRoot || !treeEl) { if (statusEl) statusEl.textContent = 'Could not parse the API surface.'; return; }
+            const c = countApiNodes(apiTreeRoot);
+            const summary = c.ns + ' namespaces, ' + c.method + ' methods, ' + c.field + ' constants. Click a leaf to insert it.';
+            if (statusEl) { statusEl.dataset.summary = summary; statusEl.textContent = summary; }
+            renderApiPackages();
+            if (searchEl) {
+                searchEl.disabled = false;
+                searchEl.addEventListener('input', function () {
+                    const q = searchEl.value.trim();
+                    if (q) renderApiSearch(q); else renderApiPackages();
+                });
+            }
+        }
+
+        function renderApiPackages() {
+            const treeEl = document.getElementById('apiTree');
+            const statusEl = document.getElementById('apiStatus');
+            treeEl.innerHTML = '';
+            apiTreeRoot.children
+                .filter(function (c) { return c.kind === 'ns'; })
+                .forEach(function (pkg) { treeEl.appendChild(renderApiNode(pkg, 'wasmts')); });
+            if (statusEl && statusEl.dataset.summary) statusEl.textContent = statusEl.dataset.summary;
+        }
+
+        function renderApiNode(node, parentPath) {
+            const path = apiPath(parentPath, node.name);
+            if (node.kind === 'ns') {
+                const det = document.createElement('details');
+                det.className = 'api-ns';
+                const sum = document.createElement('summary');
+                sum.textContent = node.name;
+                det.appendChild(sum);
+                let built = false;
+                det.addEventListener('toggle', function () {
+                    if (det.open && !built) {
+                        built = true;
+                        node.children.slice()
+                            .sort(function (a, b) { return a.name.localeCompare(b.name); })
+                            .forEach(function (c) { det.appendChild(renderApiNode(c, path)); });
+                    }
+                });
+                return det;
+            }
+            const leaf = document.createElement('div');
+            leaf.className = 'api-leaf api-' + node.kind;
+            leaf.title = path;
+            leaf.textContent = node.signature || node.name;
+            leaf.addEventListener('click', function () { insertApiCall(path, node); });
+            return leaf;
+        }
+
+        function renderApiSearch(query) {
+            const treeEl = document.getElementById('apiTree');
+            const statusEl = document.getElementById('apiStatus');
+            if (!treeEl || !apiTreeRoot) return;
+            const q = query.toLowerCase();
+            const matches = [];
+            (function walk(node, parentPath) {
+                (node.children || []).forEach(function (c) {
+                    const path = apiPath(parentPath, c.name);
+                    if (c.kind === 'ns') walk(c, path);
+                    else if (path.toLowerCase().indexOf(q) !== -1) matches.push({ path: path, node: c });
+                });
+            })(apiTreeRoot, 'wasmts');
+            treeEl.innerHTML = '';
+            const cap = 300;
+            matches.slice(0, cap).forEach(function (hit) {
+                const leaf = document.createElement('div');
+                leaf.className = 'api-leaf api-' + hit.node.kind;
+                leaf.title = hit.path;
+                const pre = document.createElement('span');
+                pre.className = 'api-path';
+                pre.textContent = hit.path.slice(0, hit.path.length - hit.node.name.length);
+                leaf.appendChild(pre);
+                leaf.appendChild(document.createTextNode(hit.node.signature || hit.node.name));
+                leaf.addEventListener('click', function () { insertApiCall(hit.path, hit.node); });
+                treeEl.appendChild(leaf);
+            });
+            if (statusEl) statusEl.textContent = matches.length + ' match' + (matches.length === 1 ? '' : 'es') +
+                (matches.length > cap ? ' (showing first ' + cap + ')' : '');
+        }
+
+        // Pull the parameter NAMES out of a .d.ts param list, splitting on
+        // top-level commas only (so generics/object/array types don't break it)
+        // and taking the identifier before each `:`. e.g.
+        // "geometry: Geometry, distance: number" -> ["geometry", "distance"].
+        function extractParamNames(params) {
+            if (!params || !params.trim()) return [];
+            const out = [];
+            let depth = 0, cur = '';
+            for (const ch of params) {
+                if ('<({['.includes(ch)) depth++;
+                else if ('>)}]'.includes(ch)) depth--;
+                if (ch === ',' && depth === 0) { out.push(cur); cur = ''; }
+                else cur += ch;
+            }
+            if (cur.trim()) out.push(cur);
+            return out
+                .map(s => { const m = s.trim().match(/^([A-Za-z0-9_$]+)\??\s*:/); return m ? m[1] : ''; })
+                .filter(Boolean);
+        }
+
+        function insertApiCall(path, node) {
+            if (!monacoEditor) return;
+            let text = path, landInside = false;
+            if (node.kind === 'method') {
+                // Insert the real parameter names so a clicked method shows what
+                // it needs (e.g. BufferOp.bufferOp(geometry, distance)) instead of
+                // a bare no-arg call that throws an opaque Java ClassCastException.
+                const names = extractParamNames(node.params);
+                text = path + '(' + names.join(', ') + ')';
+                landInside = names.length === 0; // empty parens: drop cursor inside
+            }
+            const sel = monacoEditor.getSelection();
+            monacoEditor.executeEdits('api-browser', [{ range: sel, text: text, forceMoveMarkers: true }]);
+            if (landInside) {
+                const pos = monacoEditor.getPosition();
+                if (pos) monacoEditor.setPosition({ lineNumber: pos.lineNumber, column: pos.column - 1 });
+            }
+            monacoEditor.focus();
+        }
     </script>
 </body>
 </html>

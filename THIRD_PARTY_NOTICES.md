@@ -69,11 +69,3 @@ license, because they contain JTS documentation text.
 the JTS sources jar during code generation. It is a build dependency of this
 repository. The npm package does not contain it, and the WebAssembly binary does
 not embed it.
-
-## Not included in the npm package
-
-The browser demo on GitHub Pages loads
-[coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) (MIT,
-Copyright (c) 2021 Guido Zuidhof) for SharedArrayBuffer support on static
-hosting. It is part of the demo site only; it is not bundled in the npm package
-or the WebAssembly binary.

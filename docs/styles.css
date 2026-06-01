@@ -252,3 +252,45 @@ select:disabled { background: #f5f5f5; cursor: not-allowed; }
     z-index: 10;
     max-width: 300px;
 }
+#apiReferenceSection p { color: #555; }
+#apiSearch {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+#apiSearch:disabled { background: #f5f5f5; cursor: not-allowed; }
+.api-status { font-size: 12px; color: #888; margin-bottom: 8px; }
+.api-tree {
+    max-height: 380px;
+    overflow-y: auto;
+    border: 1px solid #eee;
+    border-radius: 4px;
+    padding: 6px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    background: #fafafa;
+}
+.api-ns { margin-left: 12px; }
+.api-tree > .api-ns { margin-left: 0; }
+.api-ns > summary {
+    cursor: pointer;
+    padding: 2px 4px;
+    font-weight: 600;
+    color: #1565c0;
+}
+.api-leaf {
+    margin-left: 24px;
+    padding: 2px 4px;
+    cursor: pointer;
+    white-space: pre-wrap;
+    color: #333;
+    border-radius: 3px;
+}
+.api-leaf:hover { background: #e3f2fd; }
+.api-method { color: #2e7d32; }
+.api-field { color: #8e44ad; }
+.api-path { color: #999; }
