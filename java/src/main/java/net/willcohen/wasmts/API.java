@@ -67,10 +67,11 @@ public class API {
     // proxy method lookup needs exact signature match, and JS numbers
     // don't auto-match to Java doubles.
 
-    // wasmts-specific bulk-coordinate replacement (no JTS counterpart):
-    // rewrites a geometry's coordinates from a flat numeric array.
+    // wasmts-specific coordinate replacement (no JTS counterpart): rewrites a
+    // geometry's coordinates from a flat numeric array, reading x/y at each
+    // stride step.
     @JS.Coerce
-    @JS("wasmts.geom.applyCoordinates = (geom, arr, valuesPerCoord) => fn.invoke(geom, arr, valuesPerCoord);")
+    @JS("wasmts.geom.applyCoordinates = (geom, coords, stride) => fn.invoke(geom, coords, stride);")
     private static native void exportApplyCoordinates(Fn3 fn);
 
     // attachGeometryOverrides — hand-written JS shims that the mechanical
@@ -217,6 +218,14 @@ public class API {
     // helpers are reachable as `API_Generated.<helper>` from API.java's
     // hand-written code (createJS<X>OrNull, JS callback shims, etc.).
 
+    // Fill a Java byte[] from a JS Uint8Array/number array in one crossing.
+    // `<<24>>24` sign-extends each 0..255 value into the signed Java byte range
+    // JS-side, so the store matches a `(byte)` cast and can't trip a value-range
+    // check in web-image's array store.
+    @JS.Coerce
+    @JS("const n = arr.length; for (let i = 0; i < n; i++) { out[i] = (arr[i] << 24) >> 24; }")
+    private static native void fillByteArrayFromJS(byte[] out, Object arr);
+
     // byte[] coercion for ctor / static dispatch. Accepts either a Java
     // byte[] or a JS array/Uint8Array of numbers in [0,255]; mirrors the
     // hand-written readWKBJS conversion that this replaces.
@@ -226,10 +235,7 @@ public class API {
         }
         int len = getJSArrayLength(obj).asInt();
         byte[] result = new byte[len];
-        for (int i = 0; i < len; i++) {
-            int v = ((JSValue) getJSArrayElement(obj, i)).asInt();
-            result[i] = (byte) v;
-        }
+        fillByteArrayFromJS(result, obj);
         return result;
     }
 
@@ -299,6 +305,45 @@ public class API {
     @JS("return arr._jtsCoordArray !== undefined ? arr._jtsCoordArray : null;")
     private static native Object readJtsCoordArrayHandle(Object arr);
 
+    // Fast-path probe for extractCoordinateArray. Scans a JS coordinate array in
+    // one crossing and returns the uniform ordinate count (2/3/4) when every
+    // element is a handle-free {x, y, z?, m?} literal of the same dimensionality,
+    // else -1 -- a mixed or handle-carrying array must take the exact per-element
+    // path to preserve Coordinate subtype and handle identity. Dimension rule
+    // mirrors extractCoordinate: z ->3, z and m ->4, m-without-z ->2 (m ignored).
+    @JS("""
+        const n = arr.length;
+        let dim = 0;
+        for (let i = 0; i < n; i++) {
+            const c = arr[i];
+            if (c === null || typeof c !== 'object' || c._jtsCoord !== undefined) return -1;
+            if (c.x === undefined || c.x === null || c.y === undefined || c.y === null) return -1;
+            const hasZ = c.z !== undefined && c.z !== null;
+            const hasM = c.m !== undefined && c.m !== null;
+            const d = (hasZ && hasM) ? 4 : (hasZ ? 3 : 2);
+            if (i === 0) dim = d; else if (d !== dim) return -1;
+        }
+        return n === 0 ? 2 : dim;
+        """)
+    private static native JSValue coordArrayUniformDim(Object arr);
+
+    // Pull `dim` ordinates per coordinate from a JS literal array into a flat Java
+    // double[] in one crossing. Caller guarantees uniform dimensionality via
+    // coordArrayUniformDim.
+    @JS.Coerce
+    @JS("""
+        const n = arr.length;
+        for (let i = 0; i < n; i++) {
+            const c = arr[i];
+            const b = i * dim;
+            out[b] = c.x;
+            out[b + 1] = c.y;
+            if (dim >= 3) out[b + 2] = c.z;
+            if (dim >= 4) out[b + 3] = c.m;
+        }
+        """)
+    private static native void fillCoordsFlat(double[] out, Object arr, int dim);
+
     // Accept any of: a Java Coordinate[] (Java→Java fast path); a JS
     // array carrying the stashed _jtsCoordArray handle from
     // createJSCoordinateArray (O(1) handle reuse); or a JS array of
@@ -314,6 +359,24 @@ public class API {
         }
         int len = jsArrayLength(obj).asInt();
         Coordinate[] result = new Coordinate[len];
+        // Fast path: a uniform, handle-free literal array crosses in one pull
+        // instead of several per-element crossings per coordinate.
+        int dim = coordArrayUniformDim(obj).asInt();
+        if (dim >= 2) {
+            double[] buf = new double[len * dim];
+            fillCoordsFlat(buf, obj, dim);
+            for (int i = 0; i < len; i++) {
+                int b = i * dim;
+                if (dim == 4) {
+                    result[i] = new CoordinateXYZM(buf[b], buf[b + 1], buf[b + 2], buf[b + 3]);
+                } else if (dim == 3) {
+                    result[i] = new Coordinate(buf[b], buf[b + 1], buf[b + 2]);
+                } else {
+                    result[i] = new Coordinate(buf[b], buf[b + 1]);
+                }
+            }
+            return result;
+        }
         for (int i = 0; i < len; i++) {
             result[i] = extractCoordinate(jsArrayElement(obj, i));
         }
@@ -477,31 +540,25 @@ public class API {
     // they don't need typed-array semantics on the JS side. Param-side
     // extractors mirror extractByteArray's JS-or-Java tolerance — if a
     // caller passes the underlying primitive array directly (less common
-    // but possible from JVM call sites), we accept it; otherwise treat
-    // the value as a JS array and unbox per-element.
+    // but possible from JVM call sites), we accept it; otherwise the value
+    // is a JS array, and the numeric ones fill in a single crossing.
 
+    // Generic double[] coercion for registry-dispatched entry points; the only
+    // one today is AffineTransformation's 6-element matrix. It shares
+    // jsArrayToDoubles to keep one JS-array-to-Java-array path, not for the
+    // crossing count, which at this size is not worth counting.
     static double[] extractDoubleArray(Object obj) {
         if (obj instanceof double[]) {
             return (double[]) obj;
         }
-        int len = getJSArrayLength(obj).asInt();
-        double[] result = new double[len];
-        for (int i = 0; i < len; i++) {
-            result[i] = ((JSValue) getJSArrayElement(obj, i)).asDouble();
-        }
-        return result;
+        return jsArrayToDoubles(obj);
     }
 
     static int[] extractIntArray(Object obj) {
         if (obj instanceof int[]) {
             return (int[]) obj;
         }
-        int len = getJSArrayLength(obj).asInt();
-        int[] result = new int[len];
-        for (int i = 0; i < len; i++) {
-            result[i] = ((JSValue) getJSArrayElement(obj, i)).asInt();
-        }
-        return result;
+        return jsArrayToInts(obj);
     }
 
     static JSObject createJSDoubleArray(double[] arr) {
@@ -709,14 +766,16 @@ public class API {
     @JS("return new Uint8Array(length);")
     private static native JSObject createUint8Array(JSNumber length);
 
-    @JS("arr[index] = value;")
-    private static native void setByteInArray(JSObject arr, JSNumber index, JSNumber value);
+    // Copy a Java byte[] into a JS Uint8Array in one crossing: the JS loop reads
+    // each byte from the Java byte[] proxy (& 0xFF to unsign) instead of Java
+    // making a separate crossing per byte.
+    @JS.Coerce
+    @JS("const n = src.length; for (let i = 0; i < n; i++) { dst[i] = src[i] & 0xFF; }")
+    private static native void fillJSUint8ArrayFromBytes(JSObject dst, byte[] src);
 
     static JSObject byteArrayToJSUint8Array(byte[] bytes) {
         JSObject arr = createUint8Array(JSNumber.of(bytes.length));
-        for (int i = 0; i < bytes.length; i++) {
-            setByteInArray(arr, JSNumber.of(i), JSNumber.of(bytes[i] & 0xFF));
-        }
+        fillJSUint8ArrayFromBytes(arr, bytes);
         return arr;
     }
 
@@ -848,27 +907,57 @@ public class API {
         }
     }
 
+    // Shared coordinate-transfer primitive. WasmGC keeps the Java heap in managed
+    // GC objects with no linear-memory address, so a JS numeric array cannot be
+    // memcpy'd into a Java double[]. Filling it via a single @JS crossing costs N
+    // one-way proxy writes, where reading the JS array element-by-element with
+    // getJSArrayElement + asDouble costs N round trips. Every path that lands a JS
+    // numeric array in Java goes through here, applyCoordinatesJS included.
+    @JS.Coerce
+    @JS("const n = arr.length; for (let i = 0; i < n; i++) { out[i] = arr[i]; }")
+    private static native void fillDoubleArrayFromJS(double[] out, Object arr);
+
+    static double[] jsArrayToDoubles(Object jsArray) {
+        int len = getJSArrayLength(jsArray).asInt();
+        double[] buf = new double[len];
+        fillDoubleArrayFromJS(buf, jsArray);
+        return buf;
+    }
+
+    // int[] sibling of fillDoubleArrayFromJS. `| 0` truncates toward zero JS-side
+    // rather than tripping a value-range check in web-image's array store. It is
+    // ToInt32, so an out-of-int-range element wraps where the asInt() it replaces
+    // saturated; both are out of contract for the int[] params this serves.
+    @JS.Coerce
+    @JS("const n = arr.length; for (let i = 0; i < n; i++) { out[i] = arr[i] | 0; }")
+    private static native void fillIntArrayFromJS(int[] out, Object arr);
+
+    static int[] jsArrayToInts(Object jsArray) {
+        int len = getJSArrayLength(jsArray).asInt();
+        int[] buf = new int[len];
+        fillIntArrayFromJS(buf, jsArray);
+        return buf;
+    }
+
     // EXPERIMENTAL — not a standard JTS pattern, may be removed or changed.
-    // Reads x/y from a JS flat array (e.g. Float64Array) at dimensional offsets so
-    // that setOrdinate calls stay in Java. Reduces JS<->WASM boundary crossings
-    // from 4N (callback + 2 setOrdinate + return) to 2N (array element reads).
+    // Rewrites x/y on a CoordinateSequence from a flat coordinate buffer already
+    // pulled into Java via jsArrayToDoubles, so both the reads and the setOrdinate
+    // writes stay on the Java side — no per-ordinate JS<->WASM crossing.
     private static class FlatArrayCoordinateSequenceFilter implements CoordinateSequenceFilter {
-        private final Object jsArray;
-        private final int valuesPerCoord;
+        private final double[] coords;
+        private final int stride;
         private int idx = 0;
 
-        FlatArrayCoordinateSequenceFilter(Object jsArray, int valuesPerCoord) {
-            this.jsArray = jsArray;
-            this.valuesPerCoord = valuesPerCoord;
+        FlatArrayCoordinateSequenceFilter(double[] coords, int stride) {
+            this.coords = coords;
+            this.stride = stride;
         }
 
         @Override
         public void filter(CoordinateSequence seq, int i) {
-            int base = idx * valuesPerCoord;
-            double x = ((JSValue) getJSArrayElement(jsArray, base)).asDouble();
-            double y = ((JSValue) getJSArrayElement(jsArray, base + 1)).asDouble();
-            seq.setOrdinate(i, 0, x);
-            seq.setOrdinate(i, 1, y);
+            int base = idx * stride;
+            seq.setOrdinate(i, 0, coords[base]);
+            seq.setOrdinate(i, 1, coords[base + 1]);
             idx++;
         }
 
@@ -956,14 +1045,17 @@ public class API {
     }
 
     // EXPERIMENTAL — may be removed or changed.
-    // Bulk coordinate replacement from a flat JS array. Avoids per-coordinate
-    // JS callback overhead of applyJS by reading array elements on the Java side.
-    private static Object applyCoordinatesJS(Object geom, Object flatArray, Object valuesPerCoord) {
+    // wasmts-specific coordinate replacement from a flat JS numeric array (no JTS
+    // analog). Pulls the whole coordinate buffer into Java in a single crossing
+    // via jsArrayToDoubles, then rewrites the geometry's ordinates Java-side,
+    // where the per-ordinate getJSArrayElement read it replaces paid a round trip
+    // per ordinate.
+    private static Object applyCoordinatesJS(Object geom, Object flatArray, Object strideObj) {
         Geometry g = API_Generated.extractGeometry(geom);
         Geometry copy = g.copy();
-        int s = ((JSValue) valuesPerCoord).asInt();
-        FlatArrayCoordinateSequenceFilter filter = new FlatArrayCoordinateSequenceFilter(flatArray, s);
-        copy.apply(filter);
+        int stride = ((JSValue) strideObj).asInt();
+        double[] coords = jsArrayToDoubles(flatArray);
+        copy.apply(new FlatArrayCoordinateSequenceFilter(coords, stride));
         copy.geometryChanged();
         return API_Generated.createJSGeometry(JSString.of(copy.getGeometryType()), copy);
     }
@@ -981,8 +1073,8 @@ public class API {
         // @JS exports below have live `wasmts.geom`, `wasmts.io`, etc.
         API_Generated.setupNamespaces();
 
-        // applyCoordinates: wasmts-specific bulk-coordinate replacement from a
-        // flat numeric array. No JTS analog.
+        // applyCoordinates: wasmts-specific coordinate replacement from a flat
+        // numeric array. No JTS analog.
         exportApplyCoordinates(API::applyCoordinatesJS);
 
         // Auto-generated dispatch table (see API_Generated.java). Installed
