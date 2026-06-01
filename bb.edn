@@ -36,4 +36,4 @@
   test
   {:doc "Run JVM test suite (oracle + differential harness)"
    :depends [gen:tests]
-   :task (shell "clojure" "-M:test")}}}
+   :task (shell "clojure" "-M:test-deps:test")}}}

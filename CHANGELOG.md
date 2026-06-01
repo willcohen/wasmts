@@ -81,3 +81,4 @@ Proof of concept: JTS Topology Suite 1.20.0 compiled to WebAssembly using GraalV
 [0.1.0-alpha4]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha3...0.1.0-alpha4
 [0.1.0-alpha3]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha2...0.1.0-alpha3
 [0.1.0-alpha2]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha1...0.1.0-alpha2
+[0.1.0-alpha1]: https://github.com/willcohen/wasmts/releases/tag/0.1.0-alpha1

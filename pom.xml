@@ -141,6 +141,13 @@
                             <workingDirectory>${project.basedir}</workingDirectory>
                         </configuration>
                     </execution>
+                    <!-- Build the wasm via native-image from ${native.image.executable}
+                         (graal-home), NOT from JAVA_HOME. Run mvn with JAVA_HOME set to a
+                         PLAIN JDK 25 that has no org.graalvm.webimage.api platform module
+                         (.jdks/labsjdk-ce-latest/Contents/Home, fetched by
+                         scripts/build-graal.sh), so javac does not hit a split-package clash
+                         with the vendored webimage.api add-source (build-helper add-source
+                         above). native-image still uses graal-home regardless of JAVA_HOME. -->
                     <execution>
                         <id>build-wasm</id>
                         <phase>package</phase>
@@ -195,6 +202,16 @@
                                     <arg value="-lh"/>
                                     <arg value="${project.basedir}/js/src/${wasm.output.name}.js"/>
                                     <arg value="${project.basedir}/js/src/${wasm.output.name}.js.wasm"/>
+                                </exec>
+                                <!-- Assemble the consumable npm package: copy js/src -> dist/
+                                     and regenerate dist/wasmts.d.ts. Runs here (after the
+                                     move above) because js/build.mjs reads js/src/. Without
+                                     this, a raw `mvn package` leaves dist/ (package.json
+                                     "main") stale. Mirrors `npm run build:js`. -->
+                                <echo message=""/>
+                                <echo message="Assembling dist/ npm package (node js/build.mjs)..."/>
+                                <exec executable="node" dir="${project.basedir}" failonerror="true">
+                                    <arg value="js/build.mjs"/>
                                 </exec>
                             </target>
                         </configuration>

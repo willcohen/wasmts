@@ -12,10 +12,6 @@ flake-profile*
 raw.edn
 raw-reflection.edn
 
-# Nix flakes
-flake.nix
-flake.lock
-
 # Project documentation
 CLAUDE.md
 WORKPLAN.md
@@ -35,6 +31,10 @@ java/target/
 
 # GraalVM build symlink
 graal-home
+
+# Fetched build JDKs (mx fetch-jdk output — the JVMCI labsjdk used to build the
+# graal submodule; large, machine-local, not source). Set JAVA_HOME here.
+.jdks/
 
 # npm
 node_modules/
