@@ -16,24 +16,24 @@ This is alpha software. The API is code-generated from a reflection of the JTS c
 
 The whole API follows a few rules. Learn these and the rest is discoverable from the type definitions.
 
-**Namespaces mirror JTS.** Every class keeps its JTS package path. `org.locationtech.jts.geom.Envelope` is `wasmts.geom.Envelope`; `org.locationtech.jts.operation.distance.DistanceOp` is `wasmts.operation.distance.DistanceOp`. The top-level groups are `geom`, `io`, `operation.*`, `algorithm`, `index.strtree`, `precision`, `densify`, `coverage`, and `math`.
+Namespaces mirror JTS. Every class keeps its JTS package path. `org.locationtech.jts.geom.Envelope` is `wasmts.geom.Envelope`; `org.locationtech.jts.operation.distance.DistanceOp` is `wasmts.operation.distance.DistanceOp`. The top-level groups are `geom`, `io`, `operation.*`, `algorithm`, `index.strtree`, `precision`, `densify`, `coverage`, and `math`.
 
-**Geometries are immutable handles.** A geometry is a JavaScript object wrapping a pointer into WASM memory. Operations return new geometries and never mutate their inputs. Memory is reclaimed by the JavaScript garbage collector, so there is nothing to free by hand.
+Geometries are immutable handles. A geometry is a JavaScript object wrapping a pointer into WASM memory. Operations return new geometries and never mutate their inputs. Memory is reclaimed by the JavaScript garbage collector, so there is nothing to free by hand.
 
-**Two call styles, same result.** Operations exist both as fluent methods on a geometry and as free functions that take the geometry first:
+Operations come in two call styles that return the same result: fluent methods on a geometry, and free functions that take the geometry first.
 
 ```javascript
 point.buffer(5);                  // fluent
 wasmts.geom.buffer(point, 5);     // functional, identical result
 ```
 
-**Constructors and stateful helpers use `create<N>`.** Because the surface comes from reflection, overloaded constructors are disambiguated by argument count: `create0()`, `create1(x)`, `create2(a, b)`, and so on, with named variants for the rest. So an envelope from four bounds is `wasmts.geom.Envelope.create4(minX, maxX, minY, maxY)`, a fixed precision model is `wasmts.geom.PrecisionModel.fromScale(1000)`, and a DE-9IM matrix from a pattern is `wasmts.geom.IntersectionMatrix.fromString('T*F**FFF*')`. Readers, writers, factories, indexes, and merger-style helpers are objects you build once with `create0()` (or `create1(...)`) and reuse.
+Constructors and stateful helpers use `create<N>`. Because the surface comes from reflection, overloaded constructors are disambiguated by argument count: `create0()`, `create1(x)`, `create2(a, b)`, and so on, with named variants for the rest. So an envelope from four bounds is `wasmts.geom.Envelope.create4(minX, maxX, minY, maxY)`, a fixed precision model is `wasmts.geom.PrecisionModel.fromScale(1000)`, and a DE-9IM matrix from a pattern is `wasmts.geom.IntersectionMatrix.fromString('T*F**FFF*')`. Readers, writers, factories, indexes, and merger-style helpers are objects you build once with `create0()` (or `create1(...)`) and reuse.
 
-**Coordinates are plain objects.** `{x, y}` for 2D, `{x, y, z}` for 3D, `{x, y, z, m}` for 4D. `getCoordinates()` returns an array of these, and the WKT, WKB, and GeoJSON readers and writers preserve Z and M.
+Coordinates are plain objects. `{x, y}` for 2D, `{x, y, z}` for 3D, `{x, y, z, m}` for 4D. `getCoordinates()` returns an array of these, and the WKT, WKB, and GeoJSON readers and writers preserve Z and M.
 
-**Move geometry across boundaries as a format, not a handle.** A handle is only valid inside the WASM instance that created it. To send geometry to a Web Worker or persist it, serialize to WKT, WKB, or GeoJSON and parse it on the other side.
+Move geometry across boundaries as a serialized format. A handle is only valid inside the WASM instance that created it. To send geometry to a Web Worker or persist it, serialize to WKT, WKB, or GeoJSON and parse it on the other side.
 
-The shipped `dist/wasmts.d.ts` is the authoritative list of what exists. It is generated alongside the WASM, and editor autocomplete is driven by it.
+The shipped `dist/wasmts.d.ts` is the authoritative list of what exists. It is generated alongside the WASM and drives editor autocomplete.
 
 ## Install
 
@@ -164,7 +164,7 @@ The build emits:
 - `dist/wasmts.js.wasm` — the WASM binary
 - `dist/wasmts.d.ts` — the TypeScript declarations
 
-The Java bridge, the `.d.ts`, and the test suite are not hand-written. They are generated from a reflection of the JTS classpath by the `bb gen:*` tasks (`gen:api`, `gen:dts`, `gen:tests`, or `gen:all`), with per-method overrides kept in `manual.edn`. To widen JTS coverage you adjust the registry and the overrides, then regenerate, rather than writing bridge code by hand.
+The Java bridge, the `.d.ts`, and the test suite are generated from a reflection of the JTS classpath by the `bb gen:*` tasks (`gen:api`, `gen:dts`, `gen:tests`, or `gen:all`), with per-method overrides kept in `manual.edn`. To widen JTS coverage you adjust the registry and the overrides, then regenerate, rather than writing bridge code by hand.
 
 To update the JTS version, change `<jts.version>` in `pom.xml`, regenerate, and rebuild.
 
