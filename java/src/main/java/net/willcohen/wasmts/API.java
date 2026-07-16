@@ -67,12 +67,43 @@ public class API {
     // proxy method lookup needs exact signature match, and JS numbers
     // don't auto-match to Java doubles.
 
+    // Flat-buffer surface (no JTS counterpart). Two words, two meanings, used
+    // consistently across all four entries:
+    //   dim    ordinates per coordinate that carry meaning: 2 xy, 3 xyz, 4 xyzm.
+    //   stride step between coordinates in the array. >= dim; defaults to dim.
+    //          Slots between dim and stride are zero-filled padding, so a caller
+    //          needing a 4-wide buffer of xy pairs asks for dim 2, stride 4 and
+    //          gets x,y,0,0 -- not x,y,NaN,NaN, which is what emitting z/m off a
+    //          2D geometry would produce.
+    // getCoordinatesFlat(g, dim, stride) and applyCoordinates(g, coords, stride)
+    // share a stride: what one writes at a given stride the other reads back. Only
+    // x/y survive the return trip — applyCoordinates writes ordinates 0 and 1, so
+    // a z or m edit made in the buffer is not applied.
+
     // wasmts-specific coordinate replacement (no JTS counterpart): rewrites a
     // geometry's coordinates from a flat numeric array, reading x/y at each
     // stride step.
     @JS.Coerce
     @JS("wasmts.geom.applyCoordinates = (geom, coords, stride) => fn.invoke(geom, coords, stride);")
     private static native void exportApplyCoordinates(Fn3 fn);
+
+    // Absent offsets normalize to [] rather than null: a real offsets array
+    // always has >= 2 entries ([0, n]), so length 0 is an unambiguous "absent"
+    // and we never depend on how a JS null coerces to a Java Object.
+    @JS.Coerce
+    @JS("wasmts.geom.fromFlat = (type, coords, dim, ringOffsets, partOffsets) =>"
+        + " fn.invoke(type, coords, dim ?? 2, ringOffsets ?? [], partOffsets ?? []);")
+    private static native void exportFromFlat(Fn5 fn);
+
+    // Inverse of fromFlat: same offsets layout, so the two round trip.
+    @JS.Coerce
+    @JS("wasmts.geom.toFlat = (geom, dim) => fn.invoke(geom, dim ?? 2);")
+    private static native void exportToFlat(Fn2 fn);
+
+    @JS.Coerce
+    @JS("wasmts.geom.getCoordinatesFlat = (geom, dim, stride) =>"
+        + " fn.invoke(geom, dim ?? 2, stride ?? dim ?? 2);")
+    private static native void exportGetCoordinatesFlat(Fn3 fn);
 
     // attachGeometryOverrides — hand-written JS shims that the mechanical
     // wireGeometryMethods (API_Generated) can't express: polymorphic
@@ -86,6 +117,10 @@ public class API {
         // classify into a supported shape (yet). When a bespoke handler
         // migrates, drop its line here; the wire will produce the shim.
         // applyCoordinates stays bespoke (wasmts-specific, no JTS analog).
+        // fromFlat / toFlat / getCoordinatesFlat deliberately get no fluent shim:
+        // each one costs a closure per geometry constructed, on the hot path
+        // they exist to speed up, and the functional wasmts.geom.* form is the
+        // one that's declared in the d.ts.
         obj.applyCoordinates = (...args) => wasmts.geom.applyCoordinates(obj, ...args);
 
         // JS-name aliases and polymorphic dispatch the auto-gen wire can't
@@ -779,6 +814,40 @@ public class API {
         return arr;
     }
 
+    // double[] -> JS Float64Array, the output-direction mirror of
+    // jsArrayToDoubles. Distinct from createJSDoubleArray, which builds a plain
+    // JS Array one pushToJSArray crossing at a time — fine for the short
+    // fixed-length matrices it serves, wrong for a coordinate buffer.
+    @JS("return new Float64Array(length);")
+    private static native JSObject createFloat64Array(JSNumber length);
+
+    @JS.Coerce
+    @JS("const n = src.length; for (let i = 0; i < n; i++) { dst[i] = src[i]; }")
+    private static native void fillJSFloat64ArrayFromDoubles(JSObject dst, double[] src);
+
+    static JSObject doubleArrayToJSFloat64Array(double[] src) {
+        JSObject arr = createFloat64Array(JSNumber.of(src.length));
+        fillJSFloat64ArrayFromDoubles(arr, src);
+        return arr;
+    }
+
+    @JS("return new Int32Array(length);")
+    private static native JSObject createInt32Array(JSNumber length);
+
+    @JS.Coerce
+    @JS("const n = src.length; for (let i = 0; i < n; i++) { dst[i] = src[i]; }")
+    private static native void fillJSInt32ArrayFromInts(JSObject dst, int[] src);
+
+    static JSObject intArrayToJSInt32Array(int[] src) {
+        JSObject arr = createInt32Array(JSNumber.of(src.length));
+        fillJSInt32ArrayFromInts(arr, src);
+        return arr;
+    }
+
+    @JS("return { type: type, coords: coords, dim: dim, ringOffsets: ringOffsets, partOffsets: partOffsets };")
+    private static native Object makeFlatGeometry(JSString type, JSObject coords, JSNumber dim,
+                                                  Object ringOffsets, Object partOffsets);
+
     // Helper to convert a Collection<Geometry> to a JavaScript array
     static Object convertGeometryCollectionToJS(Collection<Geometry> geometries) {
         JSObject jsArray = createJSArray();
@@ -1060,6 +1129,230 @@ public class API {
         return API_Generated.createJSGeometry(JSString.of(copy.getGeometryType()), copy);
     }
 
+    // Read one coordinate out of a flat interleaved buffer. Dimension rule
+    // matches extractCoordinate/fillCoordsFlat: 3 -> z, 4 -> z and m.
+    private static Coordinate flatCoordAt(double[] cs, int i, int dim) {
+        int b = i * dim;
+        if (dim >= 4) {
+            return new CoordinateXYZM(cs[b], cs[b + 1], cs[b + 2], cs[b + 3]);
+        }
+        if (dim == 3) {
+            return new Coordinate(cs[b], cs[b + 1], cs[b + 2]);
+        }
+        return new Coordinate(cs[b], cs[b + 1]);
+    }
+
+    // Coordinates [start, end) of a flat buffer, in coordinate units.
+    private static Coordinate[] flatCoordRange(double[] cs, int dim, int start, int end) {
+        Coordinate[] out = new Coordinate[end - start];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = flatCoordAt(cs, start + i, dim);
+        }
+        return out;
+    }
+
+    // Rings [ringStart, ringEnd) of ringOffsets form one polygon: first ring is
+    // the shell, the rest are holes. That ordering is GeoJSON's and JTS's alike,
+    // so a caller handing us GeoJSON ring order (including @mapbox/vector-tile's
+    // classifyRings output) needs no reordering.
+    private static Polygon buildFlatPolygon(double[] cs, int dim, int[] ringOffsets,
+                                            int ringStart, int ringEnd) {
+        if (ringEnd - ringStart <= 0) {
+            return factory.createPolygon();
+        }
+        LinearRing shell = factory.createLinearRing(
+            flatCoordRange(cs, dim, ringOffsets[ringStart], ringOffsets[ringStart + 1]));
+        LinearRing[] holes = new LinearRing[ringEnd - ringStart - 1];
+        for (int i = 0; i < holes.length; i++) {
+            int r = ringStart + 1 + i;
+            holes[i] = factory.createLinearRing(
+                flatCoordRange(cs, dim, ringOffsets[r], ringOffsets[r + 1]));
+        }
+        return factory.createPolygon(shell, holes);
+    }
+
+    // Construction from flat buffers. Two levels of offsets, each with a trailing
+    // end entry: ringOffsets indexes coords (coordinate units), partOffsets
+    // indexes ringOffsets. An empty offsets array means "not used at this level"
+    // — see exportCreateFromFlat. Two levels rather than a per-ring entry because
+    // every geometry returned to JS carries a createJSGeometry wrapper and its
+    // closures, so building ring by ring allocates a throwaway handle per ring.
+    //
+    //   Point / MultiPoint / LineString  coords only
+    //   MultiLineString                  ringOffsets delimits each line
+    //   Polygon                          ringOffsets delimits shell then holes
+    //   MultiPolygon                     partOffsets delimits polygons in ring space
+    //
+    // Coordinates land in the default GeometryFactory's CoordinateArraySequence,
+    // the same representation GeoJsonReader produces, so this is purely a cheaper
+    // route to an identical geometry and nothing downstream can tell them apart.
+    private static Geometry buildFromFlat(String type, double[] cs, int dim,
+                                          int[] ringOffsets, int[] partOffsets) {
+        requireFlatDim(dim);
+        int nCoords = cs.length / dim;
+        switch (type) {
+            case "Point":
+                return nCoords == 0 ? factory.createPoint() : factory.createPoint(flatCoordAt(cs, 0, dim));
+            case "MultiPoint":
+                return factory.createMultiPointFromCoords(flatCoordRange(cs, dim, 0, nCoords));
+            case "LineString":
+                return factory.createLineString(flatCoordRange(cs, dim, 0, nCoords));
+            case "LinearRing":
+                return factory.createLinearRing(flatCoordRange(cs, dim, 0, nCoords));
+            case "MultiLineString": {
+                LineString[] lines = new LineString[Math.max(ringOffsets.length - 1, 0)];
+                for (int i = 0; i < lines.length; i++) {
+                    lines[i] = factory.createLineString(
+                        flatCoordRange(cs, dim, ringOffsets[i], ringOffsets[i + 1]));
+                }
+                return factory.createMultiLineString(lines);
+            }
+            case "Polygon":
+                return buildFlatPolygon(cs, dim, ringOffsets, 0, Math.max(ringOffsets.length - 1, 0));
+            case "MultiPolygon": {
+                Polygon[] polys = new Polygon[Math.max(partOffsets.length - 1, 0)];
+                for (int i = 0; i < polys.length; i++) {
+                    polys[i] = buildFlatPolygon(cs, dim, ringOffsets, partOffsets[i], partOffsets[i + 1]);
+                }
+                return factory.createMultiPolygon(polys);
+            }
+            default:
+                throw new IllegalArgumentException("fromFlat: unsupported type " + type);
+        }
+    }
+
+    // Lets callers holding coordinates in typed arrays skip the serialize/parse
+    // round trip GeoJsonReader.read pays on both sides: JSON.stringify in JS, then
+    // a JSON text parse in Java. That round trip, not the crossing count, is what
+    // makes the GeoJSON route expensive.
+    private static Object fromFlatJS(Object type, Object coords, Object dim,
+                                           Object ringOffsets, Object partOffsets) {
+        Geometry g = buildFromFlat(((JSValue) type).asString(),
+                                   jsArrayToDoubles(coords),
+                                   ((JSValue) dim).asInt(),
+                                   jsArrayToInts(ringOffsets),
+                                   jsArrayToInts(partOffsets));
+        return API_Generated.createJSGeometry(JSString.of(g.getGeometryType()), g);
+    }
+
+    // Every coordinate of the geometry as one flat buffer, in the same order
+    // getCoordinates reports and applyCoordinates writes back. Structure is not
+    // preserved; use toFlat when rings and parts matter.
+    private static Object getCoordinatesFlatJS(Object geom, Object dimObj, Object strideObj) {
+        Coordinate[] cs = API_Generated.extractGeometry(geom).getCoordinates();
+        int dim = requireFlatDim(((JSValue) dimObj).asInt());
+        int stride = Math.max(((JSValue) strideObj).asInt(), dim);
+        // Slots between dim and stride keep Java's zero init, so padding is 0 and
+        // never NaN from getZ()/getM() on a 2D geometry.
+        double[] buf = new double[cs.length * stride];
+        for (int i = 0; i < cs.length; i++) {
+            writeCoord(buf, i * stride, cs[i], dim);
+        }
+        return doubleArrayToJSFloat64Array(buf);
+    }
+
+    // dim arrives from JS, and the readers and writers below index base + dim - 1
+    // without bounds checks of their own. Reject it at the boundary so a bad dim
+    // is a contract error naming the parameter, not an AIOOBE from inside a loop.
+    private static int requireFlatDim(int dim) {
+        if (dim < 2 || dim > 4) {
+            throw new IllegalArgumentException("flat buffer: dim must be 2, 3 or 4, got " + dim);
+        }
+        return dim;
+    }
+
+    private static void writeCoord(double[] buf, int base, Coordinate c, int dim) {
+        buf[base] = c.getX();
+        buf[base + 1] = c.getY();
+        if (dim >= 3) {
+            buf[base + 2] = c.getZ();
+        }
+        if (dim >= 4) {
+            buf[base + 3] = c.getM();
+        }
+    }
+
+    // Inverse of fromFlat over the seven types both support (GeometryCollection is
+    // not one of them). Rings are emitted shell-first then holes, matching both
+    // GeoJSON order and JTS's createPolygon(shell, holes), so a toFlat -> fromFlat
+    // round trip reproduces the geometry. ringOffsets indexes coords in coordinate
+    // units, partOffsets indexes ringOffsets; each carries a trailing end entry and
+    // is omitted for the types that do not need it.
+    private static Object toFlatJS(Object geom, Object dimObj) {
+        Geometry g = API_Generated.extractGeometry(geom);
+        int dim = requireFlatDim(((JSValue) dimObj).asInt());
+        String type = g.getGeometryType();
+
+        ArrayList<Coordinate[]> rings = new ArrayList<>();
+        ArrayList<Integer> parts = new ArrayList<>();
+        boolean hasRings = false;
+        boolean hasParts = false;
+
+        switch (type) {
+            case "Point":
+            case "MultiPoint":
+            case "LineString":
+            case "LinearRing":
+                rings.add(g.getCoordinates());
+                break;
+            case "MultiLineString":
+                hasRings = true;
+                for (int i = 0; i < g.getNumGeometries(); i++) {
+                    rings.add(g.getGeometryN(i).getCoordinates());
+                }
+                break;
+            case "Polygon":
+                hasRings = true;
+                addPolygonRings((Polygon) g, rings);
+                break;
+            case "MultiPolygon":
+                hasRings = true;
+                hasParts = true;
+                for (int i = 0; i < g.getNumGeometries(); i++) {
+                    parts.add(rings.size());
+                    addPolygonRings((Polygon) g.getGeometryN(i), rings);
+                }
+                parts.add(rings.size());
+                break;
+            default:
+                throw new IllegalArgumentException("toFlat: unsupported type " + type);
+        }
+
+        int n = 0;
+        for (Coordinate[] r : rings) {
+            n += r.length;
+        }
+        double[] coords = new double[n * dim];
+        int[] ringOffsets = new int[rings.size() + 1];
+        int k = 0;
+        for (int r = 0; r < rings.size(); r++) {
+            ringOffsets[r] = k;
+            for (Coordinate c : rings.get(r)) {
+                writeCoord(coords, k * dim, c, dim);
+                k++;
+            }
+        }
+        ringOffsets[rings.size()] = k;
+
+        int[] partOffsets = new int[parts.size()];
+        for (int i = 0; i < parts.size(); i++) {
+            partOffsets[i] = parts.get(i);
+        }
+
+        return makeFlatGeometry(JSString.of(type),
+                                doubleArrayToJSFloat64Array(coords),
+                                JSNumber.of(dim),
+                                hasRings ? intArrayToJSInt32Array(ringOffsets) : null,
+                                hasParts ? intArrayToJSInt32Array(partOffsets) : null);
+    }
+
+    private static void addPolygonRings(Polygon p, ArrayList<Coordinate[]> rings) {
+        rings.add(p.getExteriorRing().getCoordinates());
+        for (int i = 0; i < p.getNumInteriorRing(); i++) {
+            rings.add(p.getInteriorRingN(i).getCoordinates());
+        }
+    }
+
     // Geometry base class - getDimension
 
     // Geometry base class - getBoundaryDimension
@@ -1076,6 +1369,11 @@ public class API {
         // applyCoordinates: wasmts-specific coordinate replacement from a flat
         // numeric array. No JTS analog.
         exportApplyCoordinates(API::applyCoordinatesJS);
+
+        // Flat-buffer construction and extraction. No JTS analog.
+        exportFromFlat(API::fromFlatJS);
+        exportToFlat(API::toFlatJS);
+        exportGetCoordinatesFlat(API::getCoordinatesFlatJS);
 
         // Auto-generated dispatch table (see API_Generated.java). Installed
         // last so its registrations overwrite hand-written exports at any

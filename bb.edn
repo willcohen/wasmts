@@ -36,4 +36,8 @@
   test
   {:doc "Run JVM test suite (oracle + differential harness)"
    :depends [gen:tests]
-   :task (shell "clojure" "-M:test-deps:test")}}}
+   :task (shell "clojure" "-M:test-deps:test")}
+
+  bench
+  {:doc "Compare the flat-buffer surface against the GeoJSON/boxed alternatives (needs a current dist/ build)."
+   :task (shell "node" "--experimental-wasm-exnref" "bench/run.mjs")}}}

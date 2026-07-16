@@ -160,7 +160,217 @@ function runAllTests() {
     console.log('\n--- GeometryPrecisionReducer ---\n');
     testGeometryPrecisionReducer();
 
+    console.log('\n--- Flat Construction / Extraction ---\n');
+    testFlatConstruction();
+
     console.log('\n=== All Tests Passed PASS: ===\n');
+}
+
+// Flatten a GeoJSON geometry into the buffers fromFlat expects. This is
+// the reference for how a consumer drives the flat surface — walk whatever
+// nested coordinate arrays you already hold straight into typed arrays, with no
+// intermediate JSON.
+function flattenGeoJSON(geometry, dim = 2) {
+    const coords = [];
+    const ringOffsets = [];
+    const partOffsets = [];
+
+    const pushCoord = (c) => {
+        for (let d = 0; d < dim; d++) coords.push(c[d] ?? 0);
+    };
+    const pushRing = (ring) => {
+        ringOffsets.push(coords.length / dim);
+        for (const c of ring) pushCoord(c);
+    };
+
+    const { type, coordinates } = geometry;
+    if (type === 'Point') {
+        pushCoord(coordinates);
+    } else if (type === 'MultiPoint' || type === 'LineString') {
+        for (const c of coordinates) pushCoord(c);
+    } else if (type === 'MultiLineString') {
+        for (const line of coordinates) pushRing(line);
+        ringOffsets.push(coords.length / dim);
+    } else if (type === 'Polygon') {
+        for (const ring of coordinates) pushRing(ring);
+        ringOffsets.push(coords.length / dim);
+    } else if (type === 'MultiPolygon') {
+        for (const poly of coordinates) {
+            partOffsets.push(ringOffsets.length);
+            for (const ring of poly) pushRing(ring);
+        }
+        ringOffsets.push(coords.length / dim);
+        partOffsets.push(ringOffsets.length - 1);
+    } else {
+        throw new Error(`flattenGeoJSON: unsupported type ${type}`);
+    }
+
+    return {
+        type,
+        coords: new Float64Array(coords),
+        dim,
+        ringOffsets: ringOffsets.length ? new Int32Array(ringOffsets) : null,
+        partOffsets: partOffsets.length ? new Int32Array(partOffsets) : null,
+    };
+}
+
+function testFlatConstruction() {
+    const reader = wasmts.io.geojson.GeoJsonReader.create0();
+
+    // Every supported type GeoJSON can express (LinearRing can't be, and is
+    // covered separately below), including the cases the offsets levels exist
+    // for: a polygon with a hole (two rings, one part) and a multipolygon whose
+    // parts have differing ring counts (so partOffsets can't be inferred).
+    const fixtures = [
+        {type: 'Point', coordinates: [5, 10]},
+        {type: 'MultiPoint', coordinates: [[0, 0], [10, 10], [20, 5]]},
+        {type: 'LineString', coordinates: [[0, 0], [10, 10], [20, 0]]},
+        {type: 'MultiLineString', coordinates: [[[0, 0], [10, 10]], [[20, 20], [30, 30], [40, 20]]]},
+        {type: 'Polygon', coordinates: [[[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]]]},
+        {type: 'Polygon', coordinates: [
+            [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]],
+            [[10, 10], [10, 20], [20, 20], [20, 10], [10, 10]],
+        ]},
+        {type: 'MultiPolygon', coordinates: [
+            [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]],
+            [[[20, 20], [40, 20], [40, 40], [20, 40], [20, 20]],
+             [[25, 25], [25, 30], [30, 30], [30, 25], [25, 25]]],
+        ]},
+    ];
+
+    for (const gj of fixtures) {
+        const expected = reader.read(JSON.stringify(gj));
+        const f = flattenGeoJSON(gj);
+        const actual = wasmts.geom.fromFlat(f.type, f.coords, f.dim, f.ringOffsets, f.partOffsets);
+
+        const label = `${gj.type}(${gj.coordinates.length})`;
+        assert(actual.type === expected.type, `fromFlat ${label} type matches GeoJsonReader`);
+        // equalsExact is the real contract: same structure, same vertex order,
+        // same ring order. A looser predicate (equals/area) would pass on a
+        // geometry whose holes had silently become shells.
+        assert(wasmts.geom.equalsExact(actual, expected, 0),
+               `fromFlat ${label} equalsExact GeoJsonReader.read`);
+        console.log(`PASS: fromFlat ${label} == GeoJsonReader.read`);
+    }
+
+    // LinearRing has no GeoJSON form, so it can't ride the fixture loop -- but
+    // toFlat emits it, so fromFlat has to accept it or the two disagree on which
+    // types they support.
+    const ring = wktReader.read('LINEARRING (0 0, 0 10, 10 10, 10 0, 0 0)');
+    const ringFlat = wasmts.geom.toFlat(ring);
+    assert(ringFlat.type === 'LinearRing', 'toFlat reports LinearRing');
+    const ringBack = wasmts.geom.fromFlat(ringFlat.type, ringFlat.coords, ringFlat.dim,
+                                          ringFlat.ringOffsets, ringFlat.partOffsets);
+    assert(ringBack.getGeometryType() === 'LinearRing', 'fromFlat rebuilds a LinearRing');
+    assert(wasmts.geom.equalsExact(ringBack, ring, 0), 'toFlat -> fromFlat round trips LinearRing');
+    console.log('PASS: toFlat -> fromFlat round trips LinearRing');
+
+    // The readers and writers index base + dim - 1 unguarded, so an out-of-range
+    // dim must be rejected at the boundary rather than fault inside a loop.
+    for (const badDim of [1, 5]) {
+        let rejected = false;
+        try { wasmts.geom.toFlat(ring, badDim); } catch (e) { rejected = true; }
+        assert(rejected, `toFlat rejects dim=${badDim}`);
+        rejected = false;
+        try { wasmts.geom.getCoordinatesFlat(ring, badDim); } catch (e) { rejected = true; }
+        assert(rejected, `getCoordinatesFlat rejects dim=${badDim}`);
+        rejected = false;
+        try { wasmts.geom.fromFlat('Point', [0, 0], badDim, null, null); } catch (e) { rejected = true; }
+        assert(rejected, `fromFlat rejects dim=${badDim}`);
+    }
+    console.log('PASS: flat surface rejects out-of-range dim');
+
+    // 3D: dim carries z through construction and back out.
+    const line3d = wasmts.geom.fromFlat('LineString', new Float64Array([0, 0, 5, 10, 10, 15]), 3);
+    const c3d = line3d.getCoordinates();
+    assert(c3d.length === 2 && c3d[0].z === 5 && c3d[1].z === 15, 'fromFlat dim=3 carries z');
+    console.log('PASS: fromFlat dim=3 carries z');
+
+    // Empty offsets are the "absent" signal, and an empty Point is valid.
+    const emptyPoint = wasmts.geom.fromFlat('Point', new Float64Array([]), 2);
+    assert(emptyPoint.isEmpty(), 'fromFlat empty Point is empty');
+    console.log('PASS: fromFlat empty Point');
+
+    // getCoordinatesFlat: same ordinates getCoordinates reports, interleaved.
+    const poly = reader.read(JSON.stringify(fixtures[4]));
+    const boxed = poly.getCoordinates();
+    const flat = wasmts.geom.getCoordinatesFlat(poly);
+    assert(flat instanceof Float64Array, 'getCoordinatesFlat returns a Float64Array');
+    assert(flat.length === boxed.length * 2, 'getCoordinatesFlat length is 2 per coordinate');
+    for (let i = 0; i < boxed.length; i++) {
+        assert(flat[i * 2] === boxed[i].x && flat[i * 2 + 1] === boxed[i].y,
+               `getCoordinatesFlat ordinate ${i} matches getCoordinates`);
+    }
+    console.log('PASS: getCoordinatesFlat matches getCoordinates:', flat.length, 'ordinates');
+
+    // Round trip: flat out -> flat back in reproduces the geometry.
+    const roundTripped = wasmts.geom.fromFlat(
+        'Polygon', wasmts.geom.getCoordinatesFlat(poly), 2, new Int32Array([0, boxed.length]));
+    assert(wasmts.geom.equalsExact(roundTripped, poly, 0), 'getCoordinatesFlat -> fromFlat round trips');
+    console.log('PASS: getCoordinatesFlat -> fromFlat round trip');
+
+    const dim3 = wasmts.geom.getCoordinatesFlat(line3d, 3);
+    assert(dim3.length === 6 && dim3[2] === 5 && dim3[5] === 15, 'getCoordinatesFlat dim=3 carries z');
+    console.log('PASS: getCoordinatesFlat dim=3 carries z');
+
+    // dim vs stride: padding must be 0, not NaN. Emitting z/m off a 2D geometry
+    // is what produced NaN before these were separate arguments, and it silently
+    // corrupted the 4-wide buffers callers hand to a transform.
+    const padded = wasmts.geom.getCoordinatesFlat(poly, 2, 4);
+    assert(padded.length === boxed.length * 4, 'getCoordinatesFlat stride=4 widens the buffer');
+    for (let i = 0; i < boxed.length; i++) {
+      assert(padded[i * 4] === boxed[i].x && padded[i * 4 + 1] === boxed[i].y,
+             `getCoordinatesFlat dim=2 stride=4 keeps xy at ${i}`);
+      assert(padded[i * 4 + 2] === 0 && padded[i * 4 + 3] === 0,
+             `getCoordinatesFlat dim=2 stride=4 pads with 0 not NaN at ${i}`);
+    }
+    console.log('PASS: getCoordinatesFlat dim=2 stride=4 pads with zeros');
+
+    // The pair contract: what getCoordinatesFlat writes at a stride,
+    // applyCoordinates reads at the same stride.
+    const applied = wasmts.geom.applyCoordinates(poly, padded, 4);
+    assert(wasmts.geom.equalsExact(applied, poly, 0),
+           'getCoordinatesFlat(dim,stride) -> applyCoordinates(stride) round trips');
+    console.log('PASS: getCoordinatesFlat -> applyCoordinates round trip');
+
+    testToFlat(reader, fixtures);
+}
+
+function testToFlat(reader, fixtures) {
+    // toFlat is the inverse of fromFlat, so the round trip must reproduce the
+    // geometry exactly -- including ring order, which a looser check would miss.
+    for (const gj of fixtures) {
+        const g = reader.read(JSON.stringify(gj));
+        const f = wasmts.geom.toFlat(g);
+        assert(f.type === gj.type, `toFlat ${gj.type} reports its type`);
+        assert(f.coords instanceof Float64Array, `toFlat ${gj.type} returns a Float64Array`);
+
+        const back = wasmts.geom.fromFlat(f.type, f.coords, f.dim, f.ringOffsets, f.partOffsets);
+        assert(wasmts.geom.equalsExact(back, g, 0), `toFlat -> fromFlat round trips ${gj.type}`);
+        console.log(`PASS: toFlat -> fromFlat round trips ${gj.type}(${gj.coordinates.length})`);
+    }
+
+    // Offsets are present exactly when the type needs them.
+    const pt = wasmts.geom.toFlat(reader.read('{"type":"Point","coordinates":[5,10]}'));
+    assert(pt.ringOffsets === null && pt.partOffsets === null, 'toFlat Point carries no offsets');
+    const poly = wasmts.geom.toFlat(reader.read(JSON.stringify(fixtures[5])));
+    assert(poly.ringOffsets !== null && poly.partOffsets === null, 'toFlat Polygon carries ringOffsets only');
+    assert(poly.ringOffsets.length === 3, 'toFlat Polygon-with-hole has 2 rings + trailing end');
+    const mp = wasmts.geom.toFlat(reader.read(JSON.stringify(fixtures[6])));
+    assert(mp.ringOffsets !== null && mp.partOffsets !== null, 'toFlat MultiPolygon carries both offset levels');
+    assert(mp.partOffsets.length === 3, 'toFlat MultiPolygon has 2 parts + trailing end');
+    console.log('PASS: toFlat offsets present exactly when the type needs them');
+
+    // toFlat's coords must match getCoordinatesFlat's order, since both claim to
+    // follow getCoordinates order and callers may mix them.
+    const g = reader.read(JSON.stringify(fixtures[6]));
+    const flat = wasmts.geom.toFlat(g);
+    const list = wasmts.geom.getCoordinatesFlat(g, 2);
+    assert(flat.coords.length === list.length, 'toFlat coords length matches getCoordinatesFlat');
+    for (let i = 0; i < list.length; i++) {
+      assert(flat.coords[i] === list[i], `toFlat coords[${i}] matches getCoordinatesFlat`);
+    }
+    console.log('PASS: toFlat coords match getCoordinatesFlat order');
 }
 
 function testNamespaces() {

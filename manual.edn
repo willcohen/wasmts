@@ -2612,8 +2612,26 @@
   ;; coordinates from a flat numeric array. Lives bespoke in API.java
   ;; because no JTS method has this signature; the d.ts only needs the
   ;; type declaration to surface it to TS consumers.
+  ;; wasmts-specific flat-buffer surface (no JTS counterpart). Two words, used
+  ;; consistently: `dim` is how many ordinates per coordinate carry meaning
+  ;; (2 xy, 3 xyz, 4 xyzm); `stride` is the step between coordinates in the
+  ;; array (>= dim, defaults to dim, slots in between are zero padding).
+  ;; getCoordinatesFlat(g, dim, stride) and applyCoordinates(g, coords, stride)
+  ;; round trip; fromFlat and toFlat round trip.
   "wasmts.geom.applyCoordinates"
   "applyCoordinates(geometry: Geometry, coords: Float64Array | number[], stride: number): Geometry;"
+
+  "wasmts.geom.fromFlat"
+  "fromFlat(type: 'Point' | 'MultiPoint' | 'LineString' | 'LinearRing' | 'MultiLineString' | 'Polygon' | 'MultiPolygon', coords: Float64Array | number[], dim?: number, ringOffsets?: Int32Array | number[] | null, partOffsets?: Int32Array | number[] | null): Geometry;"
+
+  ;; toFlat's `type` carries fromFlat's exact union, not `string`, so that
+  ;; fromFlat(f.type, f.coords, f.dim, f.ringOffsets, f.partOffsets) typechecks
+  ;; without a cast — the round trip is the reason both exist.
+  "wasmts.geom.toFlat"
+  "toFlat(geometry: Geometry, dim?: number): { type: 'Point' | 'MultiPoint' | 'LineString' | 'LinearRing' | 'MultiLineString' | 'Polygon' | 'MultiPolygon'; coords: Float64Array; dim: number; ringOffsets: Int32Array | null; partOffsets: Int32Array | null };"
+
+  "wasmts.geom.getCoordinatesFlat"
+  "getCoordinatesFlat(geometry: Geometry, dim?: number, stride?: number): Float64Array;"
 
   ;; Geometry.getCoordinates() returns [{x, y, z?, m?}, ...] plain JS objects
   ;; in this codebase (not wrapped Coordinate handles), for fast iteration in
