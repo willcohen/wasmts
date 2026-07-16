@@ -291,6 +291,52 @@ function testFlatConstruction() {
     assert(emptyPoint.isEmpty(), 'fromFlat empty Point is empty');
     console.log('PASS: fromFlat empty Point');
 
+    // Coordinates with no offsets to slice them by must not build an empty
+    // geometry: that discards the buffer, which is worse than refusing it.
+    const ring2d = new Float64Array([0, 0, 10, 0, 10, 10, 0, 10, 0, 0]);
+    for (const type of ['MultiLineString', 'Polygon', 'MultiPolygon']) {
+        let rejected = false;
+        try { wasmts.geom.fromFlat(type, ring2d, 2, null, null); } catch (e) { rejected = true; }
+        assert(rejected, `fromFlat ${type} rejects coordinates with absent offsets`);
+    }
+    // MultiPolygon needs both levels; ringOffsets alone is still a contradiction.
+    let missingParts = false;
+    try { wasmts.geom.fromFlat('MultiPolygon', ring2d, 2, [0, 5], null); }
+    catch (e) { missingParts = true; }
+    assert(missingParts, 'fromFlat MultiPolygon rejects ringOffsets without partOffsets');
+    // Empty in, empty out stays legal for the offset-bearing types.
+    for (const type of ['MultiLineString', 'Polygon', 'MultiPolygon']) {
+        const empty = wasmts.geom.fromFlat(type, new Float64Array([]), 2, null, null);
+        assert(empty.isEmpty(), `fromFlat empty ${type} is empty`);
+    }
+    console.log('PASS: fromFlat rejects coordinates with absent offsets, empty stays empty');
+
+    // A flat buffer is a whole number of coordinates. A length that is not a
+    // multiple of dim is a partial trailing coordinate, which floor division
+    // would silently drop -- reject it rather than build a truncated geometry.
+    for (const badLen of [[0, 0, 1], [0, 0, 1, 1, 2]]) {
+        let rejected = false;
+        try { wasmts.geom.fromFlat('LineString', new Float64Array(badLen), 2); } catch (e) { rejected = true; }
+        assert(rejected, `fromFlat rejects coords length ${badLen.length} (not a multiple of dim 2)`);
+    }
+    console.log('PASS: fromFlat rejects a partial trailing coordinate');
+
+    // Malformed offset VALUES must be a contract error naming the parameter, not
+    // an opaque ArrayIndexOutOfBounds from a slice loop or a silently mis-sliced
+    // geometry. ring2d is 5 coordinates, so a valid Polygon ringOffsets is [0, 5].
+    const badOffsetCases = [
+        [[0, 99], 'a ringOffset past the buffer'],
+        [[0, 3, 2, 5], 'non-monotonic ringOffsets'],
+        [[1, 5], 'ringOffsets not starting at 0'],
+        [[0, 4], 'ringOffsets not ending at the coordinate count'],
+    ];
+    for (const [ro, why] of badOffsetCases) {
+        let rejected = false;
+        try { wasmts.geom.fromFlat('Polygon', ring2d, 2, ro, null); } catch (e) { rejected = true; }
+        assert(rejected, `fromFlat rejects ${why}`);
+    }
+    console.log('PASS: fromFlat rejects malformed offset values');
+
     // getCoordinatesFlat: same ordinates getCoordinates reports, interleaved.
     const poly = reader.read(JSON.stringify(fixtures[4]));
     const boxed = poly.getCoordinates();

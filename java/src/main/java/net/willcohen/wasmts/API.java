@@ -1189,6 +1189,15 @@ public class API {
     private static Geometry buildFromFlat(String type, double[] cs, int dim,
                                           int[] ringOffsets, int[] partOffsets) {
         requireFlatDim(dim);
+        // A flat buffer is a whole number of coordinates. A length that is not a
+        // multiple of dim means a partial trailing coordinate, which the nCoords
+        // floor-division would silently drop; reject it instead of building a
+        // geometry that is quietly missing its last ordinate(s).
+        if (cs.length % dim != 0) {
+            throw new IllegalArgumentException(
+                "fromFlat: coordinate buffer length " + cs.length
+                    + " is not a multiple of dim " + dim);
+        }
         int nCoords = cs.length / dim;
         switch (type) {
             case "Point":
@@ -1200,6 +1209,7 @@ public class API {
             case "LinearRing":
                 return factory.createLinearRing(flatCoordRange(cs, dim, 0, nCoords));
             case "MultiLineString": {
+                requireOffsets(ringOffsets, nCoords, nCoords, type, "ringOffsets");
                 LineString[] lines = new LineString[Math.max(ringOffsets.length - 1, 0)];
                 for (int i = 0; i < lines.length; i++) {
                     lines[i] = factory.createLineString(
@@ -1208,8 +1218,14 @@ public class API {
                 return factory.createMultiLineString(lines);
             }
             case "Polygon":
+                requireOffsets(ringOffsets, nCoords, nCoords, type, "ringOffsets");
                 return buildFlatPolygon(cs, dim, ringOffsets, 0, Math.max(ringOffsets.length - 1, 0));
             case "MultiPolygon": {
+                requireOffsets(ringOffsets, nCoords, nCoords, type, "ringOffsets");
+                // partOffsets index ringOffsets, so their bound is the ring count
+                // (ringOffsets carries a trailing end entry, hence length - 1).
+                requireOffsets(partOffsets, nCoords, Math.max(ringOffsets.length - 1, 0),
+                               type, "partOffsets");
                 Polygon[] polys = new Polygon[Math.max(partOffsets.length - 1, 0)];
                 for (int i = 0; i < polys.length; i++) {
                     polys[i] = buildFlatPolygon(cs, dim, ringOffsets, partOffsets[i], partOffsets[i + 1]);
@@ -1259,6 +1275,43 @@ public class API {
             throw new IllegalArgumentException("flat buffer: dim must be 2, 3 or 4, got " + dim);
         }
         return dim;
+    }
+
+    // Coordinates with no offsets to slice them by reach the Math.max in
+    // buildFromFlat as zero rings, which builds an empty geometry and drops the
+    // whole buffer. Empty in, empty out stays legal: absent offsets are only a
+    // contradiction once there are coordinates they were supposed to divide.
+    //
+    // When present, the values are validated too: the slice loops above index
+    // offsets[i]..offsets[i+1] without bounds checks of their own, so a value out
+    // of range or out of order would surface as an opaque ArrayIndexOutOfBounds
+    // from inside a loop instead of a contract error naming the parameter, or
+    // silently mis-slice. `max` is the coordinate count for ringOffsets and the
+    // ring count for partOffsets; a well-formed offsets array runs 0..max,
+    // monotonically non-decreasing.
+    private static int[] requireOffsets(int[] offsets, int nCoords, int max,
+                                        String type, String name) {
+        if (nCoords > 0 && offsets.length < 2) {
+            throw new IllegalArgumentException(
+                "fromFlat: " + type + " with " + nCoords + " coordinates requires " + name);
+        }
+        if (offsets.length == 0) {
+            return offsets;
+        }
+        if (offsets[0] != 0 || offsets[offsets.length - 1] != max) {
+            throw new IllegalArgumentException(
+                "fromFlat: " + type + " " + name + " must run 0.." + max + ", got "
+                    + offsets[0] + ".." + offsets[offsets.length - 1]);
+        }
+        for (int i = 1; i < offsets.length; i++) {
+            if (offsets[i] < offsets[i - 1] || offsets[i] > max) {
+                throw new IllegalArgumentException(
+                    "fromFlat: " + type + " " + name
+                        + " must be non-decreasing within [0, " + max + "], got "
+                        + offsets[i] + " after " + offsets[i - 1]);
+            }
+        }
+        return offsets;
     }
 
     private static void writeCoord(double[] buf, int base, Coordinate c, int dim) {
