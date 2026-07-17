@@ -36,6 +36,8 @@ import org.locationtech.jts.io.geojson.GeoJsonWriter;
 import org.locationtech.jts.io.kml.KMLReader;
 import org.locationtech.jts.io.twkb.TWKBReader;
 import org.locationtech.jts.JTSVersion;
+import org.locationtech.jts.index.strtree.ItemBoundable;
+import org.locationtech.jts.index.strtree.ItemDistance;
 import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.index.ItemVisitor;
 import org.locationtech.jts.geom.prep.PreparedGeometry;
@@ -648,6 +650,18 @@ public class API {
         return result;
     }
 
+    // Array counterpart of createJSObjectList, for the Object[] that
+    // STRtree.nearestNeighbour returns.
+    static JSObject createJSObjectArray(Object[] items) {
+        JSObject result = createJSArray();
+        if (items != null) {
+            for (Object item : items) {
+                pushToJSArray(result, item);
+            }
+        }
+        return result;
+    }
+
     // QuadEdge + Vertex collection wraps. Both element types
     // are in wrapped-classes via auto-ctor; per-element wrap goes through
     // the auto-emitted createJS<X> in API_Generated. Same null-handling
@@ -1071,6 +1085,32 @@ public class API {
         public void filter(Coordinate coord) {
             invokeFilter1ArgFn(filterFn, createJSCoordinate(coord));
         }
+    }
+
+    // The spatial indexes store items as opaque Object, so a geometry inserted
+    // from JS is stored as its JS wrapper. JTS's own GeometryItemDistance casts
+    // the stored item straight to Geometry and so fails on those. Unwrapping via
+    // extractGeometry accepts the wrapper and a bare Geometry alike, which keeps
+    // insert/query free to round-trip the caller's handle unchanged.
+    private static final class JSGeometryItemDistance implements ItemDistance {
+        @Override
+        public double distance(ItemBoundable item1, ItemBoundable item2) {
+            // nearestNeighbour walks a tree against itself, so without this the
+            // closest pair found is always some item paired with itself at 0.
+            if (item1 == item2) {
+                return Double.MAX_VALUE;
+            }
+            return API_Generated.extractGeometry(item1.getItem())
+                .distance(API_Generated.extractGeometry(item2.getItem()));
+        }
+    }
+
+    private static final ItemDistance JS_ITEM_DISTANCE = new JSGeometryItemDistance();
+
+    // GeometryItemDistance is the only concrete ItemDistance JTS ships and it
+    // carries no state, so every handle resolves to the JS-aware equivalent.
+    static ItemDistance extractItemDistance(Object obj) {
+        return JS_ITEM_DISTANCE;
     }
 
     static Object geometryApplyCoordFilter(Geometry g, JSValue filterFn) {

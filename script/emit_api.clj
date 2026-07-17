@@ -399,24 +399,6 @@
           method method))
 
 
-(defmethod dispatch-body :strtree-insert [{:keys [method]} _]
-  (format "{ API.extractSTRtree(a1).%s(API.extractEnvelope(a2), (Object) a3); return null; }" method))
-
-(defmethod dispatch-body :strtree-remove [{:keys [method]} _]
-  (format "JSBoolean.of(API.extractSTRtree(a1).%s(API.extractEnvelope(a2), (Object) a3))" method))
-
-;; STRtree.query returns a List<?> of arbitrary items. Build a JS array
-;; inline; the items are passed straight through (no extraction/wrapping).
-(defmethod dispatch-body :strtree-query [{:keys [method]} _]
-  (format
-   (str "{ org.graalvm.webimage.api.JSObject jsArray = API.createJSArray(); "
-        "for (Object item : API.extractSTRtree(a1).%s(API.extractEnvelope(a2))) { "
-        "API.pushToJSArray(jsArray, item); } return jsArray; }")
-   method))
-
-(defmethod dispatch-body :strtree-size [{:keys [method]} _]
-  (format "JSNumber.of(API.extractSTRtree(a1).%s())" method))
-
 
 (defmethod dispatch-body :linemerger-add [{:keys [method]} _]
   (format "{ API.extractLineMerger(a1).%s(API.extractGeometry(a2)); return null; }" method))
@@ -484,6 +466,10 @@
       "org.locationtech.jts.geom.Geometry"       (format "API.extractGeometry(%s)" v)
       "org.locationtech.jts.geom.Triangle"       (format "API.extractTriangle(%s)" v)
       "org.locationtech.jts.geom.LineSegment"    (format "API.extractLineSegment(%s)" v)
+      ;; ItemDistance is an interface; extractItemDistance resolves any handle
+      ;; to the JS-aware distance fn (see API.java for why JTS's own fails).
+      "org.locationtech.jts.index.strtree.ItemDistance"
+      (format "API.extractItemDistance(%s)" v)
       "org.locationtech.jts.geom.Coordinate[]"   (format "API.extractCoordinateArray(%s)" v)
       "org.locationtech.jts.geom.Geometry[]"     (format "API.extractGeometryArray(%s)" v)
       "org.locationtech.jts.geom.LinearRing"     (format "API.extractLinearRing(%s)" v)
@@ -619,6 +605,9 @@
    "double[]"                                 (fn [e] (format "API.createJSDoubleArray(%s)" e))
    "int[]"                                    (fn [e] (format "API.createJSIntArray(%s)" e))
    "java.lang.String[]"                       (fn [e] (format "API.createJSStringArray(%s)" e))
+   ;; Object[] return: STRtree.nearestNeighbour hands back a
+   ;; pair/k-set of the caller's own inserted items, unwrapped.
+   "java.lang.Object[]"                       (fn [e] (format "API.createJSObjectArray(%s)" e))
    "org.locationtech.jts.geom.Coordinate"     (fn [e] (format "API.createJSCoordinate(%s)" e))
    "org.locationtech.jts.geom.Coordinate[]"   (fn [e] (format "API.createJSCoordinateArray(%s)" e))
    "org.locationtech.jts.geom.Geometry[]"     (fn [e] (format "API.createJSGeometryArray(%s)" e))

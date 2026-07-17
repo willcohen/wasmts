@@ -102,8 +102,6 @@
     :coord*coord->bool :coord->coord
     :ctor-env :ctor-pm :ctor-coord :ctor-gf
     :ctor-im
-    :strtree-insert :strtree-remove
-    :strtree-query :strtree-size
     :linemerger-add :linemerger-get-merged-line-strings
     :triangle->double :triangle->coord :triangle->bool
     :triangle*coord->double

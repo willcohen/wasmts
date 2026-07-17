@@ -625,17 +625,12 @@
   org.locationtech.jts.index.chain.MonotoneChainSelectAction
   #{["select" ["org.locationtech.jts.index.chain.MonotoneChain" "int"]]}
 
-  ;; index.hprtree: standard r-tree internal-payload gaps.
-  ;; getBounds -> Envelope[] (return-array wrap pending);
-  ;; insert/remove take Object payload (irreducible);
-  ;; query(Env, ItemVisitor) uses callback wrapping (deferred);
-  ;; query(Env) -> List (List wrap pending).
+  ;; index.hprtree: getBounds -> Envelope[] has no return-array wrap yet.
+  ;; query(Env, ItemVisitor) needs callback wrapping; the List-returning
+  ;; query(Env) covers the same ground without it.
   org.locationtech.jts.index.hprtree.HPRtree
   #{["getBounds" []]
-    ["insert" ["org.locationtech.jts.geom.Envelope" "java.lang.Object"]]
-    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
-    ["query" ["org.locationtech.jts.geom.Envelope"]]
-    ["remove" ["org.locationtech.jts.geom.Envelope" "java.lang.Object"]]}
+    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]}
 
   ;; index.intervalrtree: IntervalRTreeNode is abstract --
   ;; concrete-class? rejects abstract-class ctors, and the abstract
@@ -650,11 +645,10 @@
   #{["insert" ["double" "double" "java.lang.Object"]]
     ["query" ["double" "double" "org.locationtech.jts.index.ItemVisitor"]]}
 
-  ;; index.kdtree: KdTree exposes internal KdNode handles
-  ;; (no extract<KdNode> + promotion to the auto-ctor set would expand the surface
-  ;; substantially), Object payload, KdNodeVisitor callbacks, List
-  ;; returns and Collection params. The static toCoordinates Collection
-  ;; helpers also need list-extractor support.
+  ;; index.kdtree: every route in and out of a KdTree goes through KdNode,
+  ;; which has no JS wrapper, so the class is unusable until KdNode is
+  ;; promoted to the auto-ctor set (the AAG QuadEdge playbook) and a
+  ;; createJSKdNodeList lands. STRtree covers the same use cases today.
   org.locationtech.jts.index.kdtree.KdTree
   #{["getRoot" []]
     ["insert" ["org.locationtech.jts.geom.Coordinate" "java.lang.Object"]]
@@ -687,11 +681,10 @@
     ["visit" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
     }
 
-   org.locationtech.jts.index.quadtree.Quadtree
+  ;; ItemVisitor callback; List-returning query(Env) covers the same ground.
+  org.locationtech.jts.index.quadtree.Quadtree
   #{
-    ["insert" ["org.locationtech.jts.geom.Envelope" "java.lang.Object"]]
     ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
-    ["remove" ["org.locationtech.jts.geom.Envelope" "java.lang.Object"]]
     }
 
    org.locationtech.jts.index.strtree.AbstractNode
@@ -722,24 +715,16 @@
     ["distance" ["org.locationtech.jts.index.strtree.ItemBoundable" "org.locationtech.jts.index.strtree.ItemBoundable"]]
     }
 
-   org.locationtech.jts.index.strtree.SIRtree
-  #{
-    ["insert" ["double" "double" "java.lang.Object"]]
-    }
 
-  ;; STRtree: all 8 uncategorized entries take ItemDistance / ItemVisitor
-  ;; callback interfaces or JTS-internal types (STRtreeNode, ArrayList).
-  ;; Callback wrapping would follow the GeometryFilter / CoordinateFilter
-  ;; pattern — non-trivial separate effort.
+
+  ;; STRtree: the two remaining ctors take JTS-internal types (STRtreeNode,
+  ;; ArrayList of Boundables) that have no JS form. query(Env, ItemVisitor)
+  ;; needs callback wrapping; the List-returning query(Env) covers the same
+  ;; ground without it.
   org.locationtech.jts.index.strtree.STRtree
   #{["<init>" ["int" "java.util.ArrayList"]]
     ["<init>" ["int" "org.locationtech.jts.index.strtree.STRtree$STRtreeNode"]]
-    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
-    ["nearestNeighbour" ["org.locationtech.jts.index.strtree.ItemDistance"]]
-    ["nearestNeighbour" ["org.locationtech.jts.index.strtree.STRtree" "org.locationtech.jts.index.strtree.ItemDistance"]]
-    ["nearestNeighbour" ["org.locationtech.jts.geom.Envelope" "java.lang.Object" "org.locationtech.jts.index.strtree.ItemDistance"]]
-    ["nearestNeighbour" ["org.locationtech.jts.geom.Envelope" "java.lang.Object" "org.locationtech.jts.index.strtree.ItemDistance" "int"]]
-    ["isWithinDistance" ["org.locationtech.jts.index.strtree.STRtree" "org.locationtech.jts.index.strtree.ItemDistance" "double"]]}
+    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]}
 
   org.locationtech.jts.index.sweepline.SweepLineIndex
   #{["computeOverlaps"
@@ -1142,17 +1127,6 @@
               "org.locationtech.jts.geom.PrecisionModel"]]
     ["union" ["java.util.Collection" "org.locationtech.jts.geom.PrecisionModel"]]}
 
-  ;; operation.polygonize: all 5 Polygonizer methods exchange
-  ;; java.util.Collection<Geometry> in either direction. List-extractor +
-  ;; JSArray wrap is the prerequisite. The
-  ;; canonical .add(Geometry) + .add(LineString) overloads + .getGeometry()
-  ;; -> Geometry already classify and cover the typical workflow.
-  org.locationtech.jts.operation.polygonize.Polygonizer
-  #{["add" ["java.util.Collection"]]
-    "getCutEdges"
-    "getDangles"
-    "getInvalidRingLines"
-    "getPolygons"}
 
   ;; operation.relate: EdgeEndBuilder + RelateNodeGraph expose
   ;; internal GeometryGraph / Edge / Iterator / List types from the DCEL
@@ -2383,6 +2357,35 @@
   {:js-path "wasmts.operation.buffer.OffsetCurve.getCurveParametric"}
 
   ;; OffsetCurve.getCurve() instance. Collides with the
+  ;; STRtree.nearestNeighbour has four overloads that all want the same JS
+  ;; path. Keep the single-tree "nearest pair" form at the default name and
+  ;; give each of the other three an intent-named path.
+  {:class  "org.locationtech.jts.index.strtree.STRtree"
+   :method "nearestNeighbour"
+   :params ["org.locationtech.jts.index.strtree.STRtree"
+            "org.locationtech.jts.index.strtree.ItemDistance"]}
+  {:js-path "wasmts.index.strtree.STRtree.nearestNeighbourJoin"}
+
+  {:class  "org.locationtech.jts.index.strtree.STRtree"
+   :method "nearestNeighbour"
+   :params ["org.locationtech.jts.geom.Envelope" "java.lang.Object"
+            "org.locationtech.jts.index.strtree.ItemDistance"]}
+  {:js-path "wasmts.index.strtree.STRtree.nearestNeighbourItem"}
+
+  {:class  "org.locationtech.jts.index.strtree.STRtree"
+   :method "nearestNeighbour"
+   :params ["org.locationtech.jts.geom.Envelope" "java.lang.Object"
+            "org.locationtech.jts.index.strtree.ItemDistance" "int"]}
+  {:js-path "wasmts.index.strtree.STRtree.nearestNeighbourK"}
+
+  ;; SIRtree.query(double) collided with query(double, double) and lost:
+  ;; the surviving 2-arg handler threw ClassCastException for every
+  ;; single-argument call, including on an empty tree.
+  {:class  "org.locationtech.jts.index.strtree.SIRtree"
+   :method "query"
+   :params ["double"]}
+  {:js-path "wasmts.index.strtree.SIRtree.queryPoint"}
+
   ;; static getCurve(Geometry, double) at the default
   ;; wasmts.operation.buffer.OffsetCurve.getCurve. Keep the static at
   ;; the default path (consistent with the rest of the static API) and
@@ -2713,10 +2716,33 @@
    ["queryAll" []]
    {:returns "java.lang.Object"}}
 
+  ;; Polygonizer predates generics, so its Collection returns are raw.
+  ;; getPolygons yields Polygons (wrapped dynamically as Geometry); the
+  ;; three diagnostic accessors yield LineStrings.
+  org.locationtech.jts.operation.polygonize.Polygonizer
+  {["add" ["java.util.Collection"]]
+   {:params {0 "org.locationtech.jts.geom.Geometry"}}
+   ["getPolygons" []]
+   {:returns "org.locationtech.jts.geom.Geometry"}
+   ["getDangles" []]
+   {:returns "org.locationtech.jts.geom.LineString"}
+   ["getCutEdges" []]
+   {:returns "org.locationtech.jts.geom.LineString"}
+   ["getInvalidRingLines" []]
+   {:returns "org.locationtech.jts.geom.LineString"}}
+
   org.locationtech.jts.index.strtree.SIRtree
   {["query" ["double"]]
    {:returns "java.lang.Object"}
    ["query" ["double" "double"]]
+   {:returns "java.lang.Object"}}
+
+  org.locationtech.jts.index.hprtree.HPRtree
+  {["query" ["org.locationtech.jts.geom.Envelope"]]
+   {:returns "java.lang.Object"}}
+
+  org.locationtech.jts.index.strtree.STRtree
+  {["query" ["org.locationtech.jts.geom.Envelope"]]
    {:returns "java.lang.Object"}}
 
   org.locationtech.jts.triangulate.DelaunayTriangulationBuilder

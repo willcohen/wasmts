@@ -163,7 +163,67 @@ function runAllTests() {
     console.log('\n--- Flat Construction / Extraction ---\n');
     testFlatConstruction();
 
+    console.log('\n--- Spatial Indexes ---\n');
+    testSpatialIndexes();
+
     console.log('\n=== All Tests Passed PASS: ===\n');
+}
+
+// Smoke coverage for the index API the "make the spatial indexes usable" work
+// exposes. Items are inserted from JS and must round-trip back out as the same
+// handles: query(env) returns a JS array of them, queryVisit(env, cb) fires the
+// callback per match, nearestNeighbour hands back the inserted pair. The
+// differential harness cannot reach these (Object payloads, callbacks), so this
+// is the regression guard.
+function testSpatialIndexes() {
+    const S = wasmts.index.strtree.STRtree;
+    const Q = wasmts.index.quadtree.Quadtree;
+    const P = wasmts.operation.polygonize.Polygonizer;
+    const searchEnv = wktReader.read('POLYGON ((-1 -1, -1 1, 1 1, 1 -1, -1 -1))').getEnvelopeInternal();
+    const a = wktReader.read('POINT (0 0)');
+    const b = wktReader.read('POINT (10 10)');
+
+    // STRtree.
+    const tree = S.create();
+    S.insert(tree, a.getEnvelopeInternal(), a);
+    S.insert(tree, b.getEnvelopeInternal(), b);
+    assert(S.size(tree) === 2, 'STRtree.size counts inserts');
+    const hits = S.query(tree, searchEnv);
+    assert(Array.isArray(hits), 'STRtree.query returns a JS array');
+    assert(hits.length === 1 && hits[0] === a, 'STRtree.query returns the inserted handle, unwrapped');
+    let visited = [];
+    S.queryVisit(tree, searchEnv, (item) => visited.push(item));
+    assert(visited.length === 1 && visited[0] === a, 'STRtree.queryVisit fires the callback with the inserted handle');
+    const nn = S.nearestNeighbour(tree, wasmts.index.strtree.GeometryItemDistance.create0());
+    assert(Array.isArray(nn) && nn.length === 2, 'STRtree.nearestNeighbour returns a pair array');
+    assert((nn[0] === a || nn[0] === b) && (nn[1] === a || nn[1] === b) && nn[0] !== nn[1],
+           'nearestNeighbour pair members are the two inserted handles');
+    let cbThrew = false;
+    try { S.queryVisit(tree, searchEnv, () => { throw new Error('cb-boom'); }); }
+    catch (e) { cbThrew = e instanceof Error; }
+    assert(cbThrew, 'a throw inside the queryVisit callback propagates out as an Error');
+    console.log('PASS: STRtree insert/query/queryVisit/nearestNeighbour + callback-throw');
+
+    // Quadtree.
+    const q = Q.create0();
+    Q.insert(q, a.getEnvelopeInternal(), a);
+    const qhits = Q.query(q, searchEnv);
+    assert(Array.isArray(qhits) && qhits.length === 1 && qhits[0] === a, 'Quadtree.query returns the inserted handle');
+    let qv = 0;
+    Q.queryVisit(q, searchEnv, () => qv++);
+    assert(qv === 1, 'Quadtree.queryVisit fires the callback');
+    console.log('PASS: Quadtree insert/query/queryVisit');
+
+    // Polygonizer: a closed ring polygonizes to one polygon; the diagnostics
+    // return (empty here) line lists, which is what un-skipping them exposed.
+    const pz = P.create0();
+    P.add(pz, wktReader.read('LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)'));
+    const polys = P.getPolygons(pz);
+    assert(Array.isArray(polys) && polys.length === 1, 'Polygonizer.getPolygons returns one polygon');
+    assert(polys[0].getGeometryType() === 'Polygon', 'the polygonized result is a Polygon');
+    assert(Array.isArray(P.getDangles(pz)) && Array.isArray(P.getCutEdges(pz))
+           && Array.isArray(P.getInvalidRingLines(pz)), 'Polygonizer diagnostics return arrays');
+    console.log('PASS: Polygonizer add/getPolygons/getDangles/getCutEdges/getInvalidRingLines');
 }
 
 // Flatten a GeoJSON geometry into the buffers fromFlat expects. This is

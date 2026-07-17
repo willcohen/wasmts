@@ -604,6 +604,7 @@
     "org.locationtech.jts.index.strtree.AbstractSTRtree"
     "org.locationtech.jts.index.strtree.BoundablePairDistanceComparator"
     "org.locationtech.jts.index.strtree.GeometryItemDistance"
+    "org.locationtech.jts.index.strtree.STRtree"
     "org.locationtech.jts.index.strtree.SIRtree"
     "org.locationtech.jts.index.sweepline.SweepLineIndex"
     "org.locationtech.jts.index.sweepline.SweepLineInterval"
@@ -963,7 +964,6 @@
 (def ^:private coord-filter-class    "org.locationtech.jts.geom.CoordinateFilter")
 (def ^:private gc-filter-class       "org.locationtech.jts.geom.GeometryComponentFilter")
 (def ^:private geom-filter-class     "org.locationtech.jts.geom.GeometryFilter")
-(def ^:private strtree-class         "org.locationtech.jts.index.strtree.STRtree")
 (def ^:private linemerger-class      "org.locationtech.jts.operation.linemerge.LineMerger")
 (def ^:private parse-exception-class "org.locationtech.jts.io.ParseException")
 (def ^:private string-class          "java.lang.String")
@@ -1071,6 +1071,10 @@
    Forward-stable: adding a class to auto-ctor-classes makes it usable as
    a method-param type anywhere in the registry without further wiring."
   (into #{"boolean"
+          ;; Object: the spatial indexes key arbitrary caller items by extent
+          ;; and hand them straight back; coerce-arg-expr passes them through.
+          "org.locationtech.jts.index.strtree.ItemDistance"
+          "java.lang.Object"
           "byte[]"
           "char"
           "double"
@@ -1134,6 +1138,8 @@
     "java.util.Collection<org.locationtech.jts.geom.LineString>"
     "java.util.Collection<org.locationtech.jts.triangulate.quadedge.QuadEdge>"
     "java.util.Collection<org.locationtech.jts.triangulate.quadedge.Vertex>"
+    "java.lang.Object"
+    "java.lang.Object[]"
     "java.util.List<java.lang.Object>"
     "java.util.List<org.locationtech.jts.geom.Coordinate>"
     "java.util.List<org.locationtech.jts.geom.Coordinate[]>"
@@ -1212,7 +1218,6 @@
         linestring-receiver? (= class linestring-class)
         pm-receiver?         (= class precision-model-class)
         lineseg-receiver?    (= class lineseg-class)
-        strtree-receiver?    (= class strtree-class)
         linemerger-receiver? (= class linemerger-class)
         throws-parse?        (contains? (set throws) parse-exception-class)
         coord?               (= r coordinate-class)
@@ -1367,23 +1372,6 @@
 
       ;; STRtree item arg: Object passthrough — the coerce-arg-expr fallback
       ;; emits `(java.lang.Object) aN` (no-op cast). Pre-checked here so the
-      ;; param doesn't slip into other shapes. Params count excludes the
-      ;; receiver, so insert/remove have 2 declared params.
-      (and strtree-receiver? (= r "void")
-           (= params [envelope-class "java.lang.Object"]))
-      :strtree-insert
-
-      (and strtree-receiver? (= r "boolean")
-           (= params [envelope-class "java.lang.Object"]))
-      :strtree-remove
-
-      (and strtree-receiver? (= r "java.util.List")
-           (= 1 (count params)) (= envelope-class (first params)))
-      :strtree-query
-
-      (and strtree-receiver? (= r "int") (empty? params))
-      :strtree-size
-
       (and linemerger-receiver? (= r "void")
            (= 1 (count params)) (jts-geometry? (first params)))
       :linemerger-add
