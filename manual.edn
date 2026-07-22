@@ -374,10 +374,10 @@
   ;; GeometryFactory: classify createPolygon(LinearRing) via the new
   ;; :gf*linearring->geom shape + a :js-path hint to createPolygonFromShell
   ;; (the 1-arg coord-array variant keeps the canonical createPolygon path).
-  ;; Skip the 8 toXArray(Collection) statics and buildGeometry(Collection)
-  ;; — Collection isn't in coerce-arg-expr and the codegen path for
-  ;; Collection<Geometry> already exists as :static-collection->geom
-  ;; only for static utility classes. The two CoordinateSequenceFactory
+  ;; buildGeometry(Collection) classifies through the raw java.util.Collection
+  ;; coercion (Arrays.asList over extractGeometryArray) + GeometryFactory's
+  ;; :receiver-call gate. Skip the 8 toXArray(Collection) statics — they
+  ;; return bare Java arrays with no JS wrap. The two CoordinateSequenceFactory
   ;; ctors and getCoordinateSequenceFactory are not in scope (CSF isn't
   ;; in wrapped-classes / coerce-arg-expr). createPointFromInternalCoord
   ;; is a JTS-internal optimisation helper. createGeometry(Geometry)
@@ -387,7 +387,7 @@
   ;; on the consumer side; the path collisions they would introduce
   ;; (one hint per variant) aren't worth the duplication.
   org.locationtech.jts.geom.GeometryFactory
-  #{"buildGeometry" "getCoordinateSequenceFactory"
+  #{"getCoordinateSequenceFactory"
     "toGeometryArray" "toLinearRingArray" "toLineStringArray"
     "toMultiLineStringArray" "toMultiPointArray" "toMultiPolygonArray"
     "toPointArray" "toPolygonArray"
@@ -626,11 +626,8 @@
   #{["select" ["org.locationtech.jts.index.chain.MonotoneChain" "int"]]}
 
   ;; index.hprtree: getBounds -> Envelope[] has no return-array wrap yet.
-  ;; query(Env, ItemVisitor) needs callback wrapping; the List-returning
-  ;; query(Env) covers the same ground without it.
   org.locationtech.jts.index.hprtree.HPRtree
-  #{["getBounds" []]
-    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]}
+  #{["getBounds" []]}
 
   ;; index.intervalrtree: IntervalRTreeNode is abstract --
   ;; concrete-class? rejects abstract-class ctors, and the abstract
@@ -642,8 +639,7 @@
     ["query" ["double" "double" "org.locationtech.jts.index.ItemVisitor"]]}
 
   org.locationtech.jts.index.intervalrtree.SortedPackedIntervalRTree
-  #{["insert" ["double" "double" "java.lang.Object"]]
-    ["query" ["double" "double" "org.locationtech.jts.index.ItemVisitor"]]}
+  #{["insert" ["double" "double" "java.lang.Object"]]}
 
   ;; index.kdtree: every route in and out of a KdTree goes through KdNode,
   ;; which has no JS wrapper, so the class is unusable until KdNode is
@@ -681,11 +677,6 @@
     ["visit" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
     }
 
-  ;; ItemVisitor callback; List-returning query(Env) covers the same ground.
-  org.locationtech.jts.index.quadtree.Quadtree
-  #{
-    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]
-    }
 
    org.locationtech.jts.index.strtree.AbstractNode
   #{
@@ -718,13 +709,10 @@
 
 
   ;; STRtree: the two remaining ctors take JTS-internal types (STRtreeNode,
-  ;; ArrayList of Boundables) that have no JS form. query(Env, ItemVisitor)
-  ;; needs callback wrapping; the List-returning query(Env) covers the same
-  ;; ground without it.
+  ;; ArrayList of Boundables) that have no JS form.
   org.locationtech.jts.index.strtree.STRtree
   #{["<init>" ["int" "java.util.ArrayList"]]
-    ["<init>" ["int" "org.locationtech.jts.index.strtree.STRtree$STRtreeNode"]]
-    ["query" ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]]}
+    ["<init>" ["int" "org.locationtech.jts.index.strtree.STRtree$STRtreeNode"]]}
 
   org.locationtech.jts.index.sweepline.SweepLineIndex
   #{["computeOverlaps"
@@ -2385,6 +2373,24 @@
    :method "query"
    :params ["double"]}
   {:js-path "wasmts.index.strtree.SIRtree.queryPoint"}
+
+  ;; query(Envelope, ItemVisitor) collides with the List-returning
+  ;; query(Envelope) at the default path. Keep the List form (the primary,
+  ;; no-callback API) at .query; route the visitor overload to .queryVisit.
+  {:class  "org.locationtech.jts.index.strtree.STRtree"
+   :method "query"
+   :params ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]}
+  {:js-path "wasmts.index.strtree.STRtree.queryVisit"}
+
+  {:class  "org.locationtech.jts.index.quadtree.Quadtree"
+   :method "query"
+   :params ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]}
+  {:js-path "wasmts.index.quadtree.Quadtree.queryVisit"}
+
+  {:class  "org.locationtech.jts.index.hprtree.HPRtree"
+   :method "query"
+   :params ["org.locationtech.jts.geom.Envelope" "org.locationtech.jts.index.ItemVisitor"]}
+  {:js-path "wasmts.index.hprtree.HPRtree.queryVisit"}
 
   ;; static getCurve(Geometry, double) at the default
   ;; wasmts.operation.buffer.OffsetCurve.getCurve. Keep the static at

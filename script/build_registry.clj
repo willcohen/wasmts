@@ -1074,6 +1074,7 @@
           ;; Object: the spatial indexes key arbitrary caller items by extent
           ;; and hand them straight back; coerce-arg-expr passes them through.
           "org.locationtech.jts.index.strtree.ItemDistance"
+          "org.locationtech.jts.index.ItemVisitor"
           "java.lang.Object"
           "byte[]"
           "char"
@@ -1082,6 +1083,8 @@
           "int"
           "int[]"
           "java.lang.String"
+          ;; Raw Collection: GeometryFactory.buildGeometry's pre-generics arg.
+          "java.util.Collection"
           "java.util.Collection<org.locationtech.jts.geom.Coordinate>"
           "java.util.Collection<org.locationtech.jts.geom.Geometry>"
           "java.util.Collection<org.locationtech.jts.geom.LineString>"

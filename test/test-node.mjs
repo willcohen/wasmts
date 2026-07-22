@@ -166,7 +166,33 @@ function runAllTests() {
     console.log('\n--- Spatial Indexes ---\n');
     testSpatialIndexes();
 
+    console.log('\n--- Exception Objects ---\n');
+    testExceptionObjects();
+
+    console.log('\n--- buildGeometry ---\n');
+    testBuildGeometry();
+
     console.log('\n=== All Tests Passed PASS: ===\n');
+}
+
+// GeometryFactory.buildGeometry over the raw java.util.Collection coercion this
+// range widened in: a JS array of geometry handles becomes the tightest single
+// geometry JTS can form. No differential test reaches it (Collection param), so
+// this pins the empty / single / homogeneous-multi / mixed cases.
+function testBuildGeometry() {
+    const GF = wasmts.geom.GeometryFactory;
+    const pt = (w) => wktReader.read(w);
+    assert(GF.buildGeometry(factory, [pt('POINT (1 2)')]).getGeometryType() === 'Point',
+           'buildGeometry of one point is a Point');
+    assert(GF.buildGeometry(factory, [pt('POINT (1 2)'), pt('POINT (3 4)')]).getGeometryType() === 'MultiPoint',
+           'buildGeometry of homogeneous points is a MultiPoint');
+    const empty = GF.buildGeometry(factory, []);
+    assert(empty.getGeometryType() === 'GeometryCollection' && empty.isEmpty(),
+           'buildGeometry of [] is an empty GeometryCollection');
+    assert(GF.buildGeometry(factory, [pt('POINT (0 0)'), pt('LINESTRING (0 0, 1 1)')]).getGeometryType()
+           === 'GeometryCollection',
+           'buildGeometry of mixed types is a GeometryCollection');
+    console.log('PASS: buildGeometry empty/single/multi/mixed');
 }
 
 // Smoke coverage for the index API the "make the spatial indexes usable" work
@@ -226,6 +252,37 @@ function testSpatialIndexes() {
     console.log('PASS: Polygonizer add/getPolygons/getDangles/getCutEdges/getInvalidRingLines');
 }
 
+// A Java exception crossing to JS must surface as a real Error (message +
+// instanceof Error), not an opaque GraalVM proxy, so consumers can catch and
+// branch on .message the way they would for any JS throw. The original Java
+// throwable is kept on a non-enumerable .javaError side channel, deliberately
+// NOT on .cause: structuredClone / postMessage always reads Error.cause, and a
+// Java proxy is not structured-cloneable, so a proxy on .cause would make every
+// caught error fail to cross a worker boundary.
+function testExceptionObjects() {
+    let caught = null;
+    try {
+        wktReader.read('NOT_A_GEOMETRY (0 0)');
+    } catch (e) {
+        caught = e;
+    }
+    assert(caught !== null, 'bad WKT parse throws');
+    assert(caught instanceof Error, 'thrown value is a real Error, not a proxy');
+    assert(typeof caught.message === 'string' && caught.message.length > 0,
+           'Error carries a non-empty message');
+    assert(typeof caught.getMessage === 'function' && caught.getMessage() === caught.message,
+           'getMessage() compat shim returns the message');
+    assert(caught.javaError !== undefined, 'original throwable kept on the .javaError side channel');
+    // The reason for the side channel: the Error must survive structured clone so
+    // it can cross a worker / postMessage boundary the way any JS throw does.
+    let cloned = null, cloneThrew = false;
+    try { cloned = structuredClone(caught); } catch (e) { cloneThrew = true; }
+    assert(!cloneThrew, 'wrapped Error survives structuredClone (worker-transferable)');
+    assert(cloned instanceof Error && cloned.message === caught.message,
+           'the structured clone is an Error carrying the same message');
+    console.log('PASS: bad parse throws Error, message:', JSON.stringify(caught.message.slice(0, 50)));
+    console.log('PASS: wrapped Error is worker-transferable, original on .javaError');
+}
 // Flatten a GeoJSON geometry into the buffers fromFlat expects. This is
 // the reference for how a consumer drives the flat surface — walk whatever
 // nested coordinate arrays you already hold straight into typed arrays, with no

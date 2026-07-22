@@ -328,11 +328,24 @@
   "Emit one generic `installFn<N>(String path, FnN fn)` native for the
    given arity. The @JS body walks the `path` dot-segments down from
    the top-level `wasmts` namespace (created by setupNamespaces) and
-   assigns the leaf to an arrow that delegates to `fn.invoke`."
+   assigns the leaf to an arrow that delegates to `fn.invoke`.
+
+   The delegate wraps `fn.invoke` in a try/catch so a Java exception
+   crossing the boundary surfaces to JS as a real `Error` (with
+   `.message` and `instanceof Error`) instead of an opaque GraalVM proxy.
+   `.getMessage()` is retained so callers written against today's proxy
+   behaviour keep working, and the original proxy is kept on a
+   non-enumerable `.javaError`. It is deliberately NOT put on `.cause`:
+   structuredClone / postMessage always reads `Error.cause`, and a Java
+   proxy is not structured-cloneable, so a proxy on `.cause` would make
+   every caught error throw DataCloneError when crossing a worker boundary
+   (Comlink / worker-router). The `instanceof Error` guard makes the wrap
+   idempotent and passes through Errors thrown by hand-written @JS helpers
+   unchanged."
   [arity]
   (format
    (str "    @JS.Coerce\n"
-        "    @JS(\"var ps=path.split('.');var o=wasmts;for(var i=1;i<ps.length-1;i++){o=o[ps[i]];}o[ps[ps.length-1]]=%s=>%s;\")\n"
+        "    @JS(\"var ps=path.split('.');var o=wasmts;for(var i=1;i<ps.length-1;i++){o=o[ps[i]];}o[ps[ps.length-1]]=%s=>{try{return %s}catch(e){if(e instanceof Error)throw e;var m;try{m=e&&typeof e.getMessage==='function'?e.getMessage():null}catch(_){m=null}m=m==null?''+e:''+m;var x=new Error(m);x.getMessage=function(){return m};try{Object.defineProperty(x,'javaError',{value:e,enumerable:false,configurable:true,writable:true})}catch(_){}throw x}};\")\n"
         "    private static native void installFn%d(String path, Fn%d fn);\n")
    (js-arglist arity) (js-fn-invoke arity) arity arity))
 
@@ -470,6 +483,10 @@
       ;; to the JS-aware distance fn (see API.java for why JTS's own fails).
       "org.locationtech.jts.index.strtree.ItemDistance"
       (format "API.extractItemDistance(%s)" v)
+      ;; ItemVisitor is a per-item callback; extractItemVisitor wraps the JS
+      ;; fn so a query(Envelope, ItemVisitor) walks matches back into JS.
+      "org.locationtech.jts.index.ItemVisitor"
+      (format "API.extractItemVisitor(%s)" v)
       "org.locationtech.jts.geom.Coordinate[]"   (format "API.extractCoordinateArray(%s)" v)
       "org.locationtech.jts.geom.Geometry[]"     (format "API.extractGeometryArray(%s)" v)
       "org.locationtech.jts.geom.LinearRing"     (format "API.extractLinearRing(%s)" v)
@@ -518,6 +535,11 @@
       "java.util.List<org.locationtech.jts.geom.Geometry>"
       (format "java.util.Arrays.asList(API.extractGeometryArray(%s))" v)
       "java.util.Collection<org.locationtech.jts.geom.Geometry>"
+      (format "java.util.Arrays.asList(API.extractGeometryArray(%s))" v)
+      ;; Raw java.util.Collection (pre-generics JTS signature, e.g.
+      ;; GeometryFactory.buildGeometry) — its elements are Geometry, so the
+      ;; same Coord/Geometry-array adaptation as the generic case applies.
+      "java.util.Collection"
       (format "java.util.Arrays.asList(API.extractGeometryArray(%s))" v)
       "java.util.List<org.locationtech.jts.geom.Coordinate>"
       (format "java.util.Arrays.asList(API.extractCoordinateArray(%s))" v)

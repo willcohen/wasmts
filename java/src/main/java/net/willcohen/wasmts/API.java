@@ -1113,6 +1113,28 @@ public class API {
         return JS_ITEM_DISTANCE;
     }
 
+    // visitItem receives the stored payload; for a JS-inserted item that is
+    // the caller's wrapper handle, so it goes straight to the JS callback and
+    // a visitor sees the same objects query(Envelope) hands back in its List.
+    private static final class JSCallbackItemVisitor implements ItemVisitor {
+        private final JSValue visitorFn;
+
+        JSCallbackItemVisitor(JSValue visitorFn) {
+            this.visitorFn = visitorFn;
+        }
+
+        @Override
+        public void visitItem(Object item) {
+            invokeFilter1ArgFn(visitorFn, item);
+        }
+    }
+
+    // Unlike the stateless ItemDistance singleton, each visitor closes over
+    // its own JS fn, so a fresh wrapper is built per query call.
+    static ItemVisitor extractItemVisitor(Object obj) {
+        return new JSCallbackItemVisitor((JSValue) obj);
+    }
+
     static Object geometryApplyCoordFilter(Geometry g, JSValue filterFn) {
         Geometry copy = g.copy();
         JSCallbackCoordinateFilter filter = new JSCallbackCoordinateFilter(filterFn);
