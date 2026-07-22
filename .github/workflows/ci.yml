@@ -1,0 +1,133 @@
+name: CI
+
+# Builds the wasm with a PRE-BUILT Oracle GraalVM and runs the test suites, so a
+# push on any branch is validated without the ~7GB from-source graal build the
+# release uses.
+#
+# The experimental web-image `svm-wasm` tool (native-image's WebAssembly backend)
+# ships only in Oracle GraalVM binaries, not in the published CE binaries. wasmts
+# gets it today by building oracle/graal master from source; here CI downloads the
+# pre-built EA instead. The published npm artifact is unaffected and unchanged: it
+# is still built from the CE submodule (GPLv2 + Classpath Exception). This
+# Oracle-built wasm is a throwaway CI artifact.
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+    inputs:
+      graalvm_ea_tag:
+        description: "Pin an oracle-graalvm-ea-builds tag (default: latest EA)"
+        required: false
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Plain JDK for javac ONLY. native-image comes from the Oracle GraalVM below
+      # (via -Dnative.image.executable), never from JAVA_HOME: the pom add-sources
+      # org.graalvm.webimage.api, which split-package clashes with a JDK that ships
+      # that module. API.java targets source 21, so temurin 21 is sufficient.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # test-node.mjs runs `node --experimental-wasm-exnref`; that flag exists only
+      # on newer Node (the runner default 20 rejects it). Match the local dev Node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+
+      # `mvn package` shells out to `bb` (codegen) and `node` (dist assembly);
+      # `bb test` needs the Clojure CLI. This installs both.
+      # Bump the pin if the action's tag has moved on.
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          bb: latest
+          cli: latest
+
+      - name: Native Image host prerequisites
+        run: sudo apt-get update && sudo apt-get install -y build-essential zlib1g-dev
+
+      - name: Install Binaryen (web-image assembles via wasm-as; needs >= 119)
+        run: |
+          set -euo pipefail
+          BTAG=$(gh api repos/WebAssembly/binaryen/releases/latest --jq .tag_name)
+          gh release download "$BTAG" -R WebAssembly/binaryen \
+            -p "binaryen-${BTAG}-x86_64-linux.tar.gz" -O "$RUNNER_TEMP/binaryen.tar.gz"
+          mkdir -p "$RUNNER_TEMP/binaryen"
+          tar xzf "$RUNNER_TEMP/binaryen.tar.gz" -C "$RUNNER_TEMP/binaryen" --strip-components=1
+          echo "$RUNNER_TEMP/binaryen/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/binaryen/bin/wasm-as" --version
+
+      - name: Install Oracle GraalVM (pre-built EA, carries svm-wasm)
+        env:
+          # Via env, not inline in run:, so the dispatch input can't inject shell.
+          EA_TAG_INPUT: ${{ inputs.graalvm_ea_tag }}
+        run: |
+          set -euo pipefail
+          # EA builds track the same master line the graal submodule pins and are
+          # the published Oracle GraalVM that bundles web-image. They rotate, so
+          # default to the latest EA and allow pinning via the dispatch input.
+          TAG="$EA_TAG_INPUT"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh api repos/graalvm/oracle-graalvm-ea-builds/releases \
+                  --jq '[.[] | select(.prerelease)][0].tag_name')
+          fi
+          echo "Oracle GraalVM EA tag: $TAG"
+          gh release download "$TAG" -R graalvm/oracle-graalvm-ea-builds \
+            -p '*linux-x64_bin.tar.gz' -O "$RUNNER_TEMP/graalvm-ea.tar.gz"
+          mkdir -p "$RUNNER_TEMP/graalvm"
+          tar xzf "$RUNNER_TEMP/graalvm-ea.tar.gz" -C "$RUNNER_TEMP/graalvm" --strip-components=1
+          # Fail loudly and early if a future EA drops the tool, rather than deep
+          # inside the native-image run.
+          if [ ! -d "$RUNNER_TEMP/graalvm/lib/svm/tools/svm-wasm" ]; then
+            echo "::error::this Oracle GraalVM build has no svm-wasm/web-image tool"
+            exit 1
+          fi
+          echo "GRAALVM_EA=$RUNNER_TEMP/graalvm" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/graalvm/bin/native-image" --version
+
+      - name: Fetch pinned graal web-image API sources (no full clone, no build)
+        run: |
+          set -euo pipefail
+          # The pom compiles API.java against graal/sdk/src/org.graalvm.webimage.api
+          # at the submodule's pinned commit. Fetch ONLY that path at that commit.
+          # This replaces the submodule checkout, not the 7GB graal build, which CI
+          # skips entirely.
+          SHA=$(git ls-tree HEAD graal | awk '{print $3}')
+          echo "graal submodule pinned at $SHA"
+          rm -rf graal && mkdir graal && cd graal
+          git init -q
+          git remote add origin https://github.com/oracle/graal.git
+          git sparse-checkout init --cone
+          git sparse-checkout set sdk/src/org.graalvm.webimage.api
+          git fetch --depth 1 --filter=blob:none origin "$SHA"
+          git checkout -q FETCH_HEAD
+          test -d sdk/src/org.graalvm.webimage.api/src \
+            || { echo "::error::web-image API sources missing after sparse fetch"; exit 1; }
+
+      - name: Build wasm (mvn package via Oracle native-image)
+        run: mvn -B package -Dnative.image.executable="$GRAALVM_EA/bin/native-image"
+
+      - name: Node test suite (npm test)
+        run: npm test
+
+      # Property-based differential suite comparing the wasm build against JVM JTS.
+      # One pre-existing property test is occasionally flaky; a lone intermittent
+      # failure here is the known cause, not a regression.
+      - name: Differential test suite (bb test)
+        run: bb test
