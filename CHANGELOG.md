@@ -3,6 +3,44 @@
 All notable changes to this project will be documented in this file. This change
 log follows the conventions of [keepachangelog.com](http://keepachangelog.com/).
 
+## [0.1.0-alpha6] - 2026-07-22
+
+Adds a typed-array geometry surface for consumers holding coordinates in flat
+buffers, makes the spatial indexes usable from JavaScript, and surfaces Java
+exceptions as real JS `Error`s. Test coverage of the generated surface is still
+growing; this remains an alpha.
+
+### Added
+
+- Flat-buffer geometry surface (`wasmts.geom.fromFlat`, `toFlat`,
+  `getCoordinatesFlat`) for building and extracting geometries through
+  `Float64Array` / `Int32Array` buffers, skipping the GeoJSON serialize/parse
+  round trip. `dim` selects the ordinates that carry meaning (2/3/4); `stride`
+  sets the step between coordinates with zero-filled padding. Malformed input (a
+  buffer length that is not a multiple of `dim`, or offsets that are absent, out
+  of range, or out of order) is rejected with a contract error.
+- Bulk coordinate and byte transfer across the JS<->WASM boundary: a JS numeric
+  array fills a Java primitive array in one crossing rather than per element.
+- Spatial indexes usable from JavaScript: `STRtree` / `Quadtree` `query`
+  (returns a JS array of the inserted items), `queryVisit` (a per-match
+  callback), and the `STRtree.nearestNeighbour` variants; `Polygonizer`
+  `getPolygons` and the diagnostic accessors (`getDangles`, `getCutEdges`,
+  `getInvalidRingLines`).
+- `GeometryFactory.buildGeometry` over a JS array of geometries.
+- Java exceptions crossing to JavaScript surface as real `Error`s (`.message`,
+  `instanceof Error`), structured-clone safe so a caught error can cross a
+  worker / `postMessage` boundary; the original throwable is kept on
+  `.javaError` and a `.getMessage()` compatibility shim is retained.
+
+### Changed
+
+- `applyCoordinates` (experimental, since alpha4) now takes a `stride` in place
+  of `valuesPerCoord`. It pairs with `getCoordinatesFlat`: a buffer written at a
+  given stride reads back at the same stride.
+- The WebAssembly image is built from the graal-pinned labsjdk (fetched with
+  `mx fetch-jdk` per the graal submodule's `common.json`), and `mvn package`
+  assembles the consumable `dist/` package.
+
 ## [0.1.0-alpha5] - 2026-06-24
 
 The API is now code-generated from a JTS reflection registry. Test coverage of
@@ -76,7 +114,8 @@ Proof of concept: JTS Topology Suite 1.20.0 compiled to WebAssembly using GraalV
 - Browser and Node.js compatible
 - Interactive demo with Monaco editor
 
-[Unreleased]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha5...HEAD
+[Unreleased]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha6...HEAD
+[0.1.0-alpha6]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha5...0.1.0-alpha6
 [0.1.0-alpha5]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha4...0.1.0-alpha5
 [0.1.0-alpha4]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha3...0.1.0-alpha4
 [0.1.0-alpha3]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha2...0.1.0-alpha3
