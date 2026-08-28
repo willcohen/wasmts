@@ -107,66 +107,88 @@ public class API {
         + " fn.invoke(geom, dim ?? 2, stride ?? dim ?? 2);")
     private static native void exportGetCoordinatesFlat(Fn3 fn);
 
-    // attachGeometryOverrides — hand-written JS shims that the mechanical
-    // wireGeometryMethods (API_Generated) can't express: polymorphic
+    // extendGeometryProto — hand-written proto entries that the mechanical
+    // buildGeometryProto (API_Generated) can't express: polymorphic
     // dispatch (relate), default args (equalsExact's tolerance ?? 0),
     // no-arg union → unaryUnion, toString → lazy WKTWriter, and the
-    // normalize ↔ norm JS-name alias. Called by API_Generated.createJSGeometry
-    // after the wire installs.
+    // normalize ↔ norm JS-name alias. Applied ONCE to the shared Geometry
+    // prototype by API_Generated.setupProtos(); wrapper instances reach
+    // these through the prototype chain, so no per-instance closures.
     @JS("""
         // Fluent shims for bespoke @JS exports under wasmts.geom.* — the
-        // auto-gen wireGeometryMethods doesn't see these because they don't
+        // auto-gen buildGeometryProto doesn't see these because they don't
         // classify into a supported shape (yet). When a bespoke handler
-        // migrates, drop its line here; the wire will produce the shim.
-        // applyCoordinates stays bespoke (wasmts-specific, no JTS analog).
-        // fromFlat / toFlat / getCoordinatesFlat deliberately get no fluent shim:
-        // each one costs a closure per geometry constructed, on the hot path
-        // they exist to speed up, and the functional wasmts.geom.* form is the
-        // one that's declared in the d.ts.
-        obj.applyCoordinates = (...args) => wasmts.geom.applyCoordinates(obj, ...args);
+        // migrates, drop its line here; the proto builder will produce the
+        // shim. applyCoordinates stays bespoke (wasmts-specific, no JTS
+        // analog). fromFlat / toFlat / getCoordinatesFlat deliberately get
+        // no fluent shim: the functional wasmts.geom.* form is the one
+        // that's declared in the d.ts.
+        p.applyCoordinates = function(...args) { return wasmts.geom.applyCoordinates(this, ...args); };
 
-        // JS-name aliases and polymorphic dispatch the auto-gen wire can't
-        // express directly.
-        obj.normalize = () => wasmts.geom.norm(obj);
-        obj.relate = (other, pattern) => {
+        // JS-name aliases and polymorphic dispatch the auto-gen proto
+        // builder can't express directly.
+        p.normalize = function() { return wasmts.geom.norm(this); };
+        p.relate = function(other, pattern) {
             if (pattern !== undefined) {
-                return wasmts.geom.relatePattern(obj, other, pattern);
+                return wasmts.geom.relatePattern(this, other, pattern);
             }
-            return wasmts.geom.relate(obj, other);
+            return wasmts.geom.relate(this, other);
         };
-        obj.equalsExact = (other, tolerance) => wasmts.geom.equalsExact(obj, other, tolerance ?? 0);
-        const originalUnion = obj.union;
-        obj.union = (other) => {
+        p.equalsExact = function(other, tolerance) { return wasmts.geom.equalsExact(this, other, tolerance ?? 0); };
+        const originalUnion = p.union;
+        p.union = function(other) {
             if (other === undefined) {
-                return wasmts.geom.unaryUnion(obj);
+                return wasmts.geom.unaryUnion(this);
             }
-            return originalUnion(other);
+            return originalUnion.call(this, other);
         };
-        obj.toString = () => {
+        p.toString = function() {
             if (!wasmts.io.WKTWriter._default) {
                 wasmts.io.WKTWriter._default = wasmts.io.WKTWriter.create0();
             }
-            return wasmts.io.WKTWriter._default.write(obj);
+            return wasmts.io.WKTWriter._default.write(this);
         };
     """)
-    static native void attachGeometryOverrides(JSObject obj);
+    static native void extendGeometryProto(JSObject p);
 
-    // attachEnvelopeOverrides — polymorphic 1-arg expandBy → expandByUniform
-    // and the JS-name alias covers → coversCoord (the wire installs both
-    // names; the alias here keeps the historical `.covers(coord)`).
+    // extendEnvelopeProto — polymorphic 1-arg expandBy → expandByUniform
+    // and the JS-name alias covers → coversCoord (the proto builder
+    // installs both names; the alias here keeps the historical
+    // `.covers(coord)`).
     @JS("""
-        const originalExpandBy = obj.expandBy;
-        obj.expandBy = (deltaX, deltaY) => deltaY === undefined
-            ? wasmts.geom.Envelope.expandByUniform(obj, deltaX)
-            : originalExpandBy(deltaX, deltaY);
-        obj.covers = (coord) => wasmts.geom.Envelope.coversCoord(obj, coord);
+        const originalExpandBy = p.expandBy;
+        p.expandBy = function(deltaX, deltaY) {
+            return deltaY === undefined
+                ? wasmts.geom.Envelope.expandByUniform(this, deltaX)
+                : originalExpandBy.call(this, deltaX, deltaY);
+        };
+        p.covers = function(coord) { return wasmts.geom.Envelope.coversCoord(this, coord); };
     """)
-    static native void attachEnvelopeOverrides(JSObject obj);
+    static native void extendEnvelopeProto(JSObject p);
+
+    // Shared prototype for Coordinate wrappers: the OO accessor surface
+    // lives here once, reading the instance's own x/y/z/m data properties
+    // through `this`. Called from main() after setupNamespaces().
+    @JS("""
+        const p = {};
+        p.getX = function() { return this.x; };
+        p.getY = function() { return this.y; };
+        p.getZ = function() { return this.z; };
+        p.getM = function() { return this.m; };
+        p.copy = function() { return wasmts.geom.Coordinate.copy(this); };
+        p.distance = function(other) { return wasmts.geom.Coordinate.distance(this, other); };
+        p.distance3D = function(other) { return wasmts.geom.Coordinate.distance3D(this, other); };
+        p.equals2D = function(other) { return wasmts.geom.Coordinate.equals2D(this, other); };
+        p.equals3D = function(other) { return wasmts.geom.Coordinate.equals3D(this, other); };
+        (wasmts._protos = wasmts._protos || {}).Coordinate = p;
+        """)
+    static native void setupCoordinateProto();
 
     // Wraps a JTS Coordinate as a JS object with eager x/y/z/m fields plus
-    // the OO accessor surface. The unpacked ordinates are computed Java-side
-    // once at wrap time and stamped onto the JS literal so JS callers can
-    // touch `c.x`/`c.y` without round-tripping through the WASM boundary.
+    // the OO accessor surface on the shared prototype. The unpacked
+    // ordinates are computed Java-side once at wrap time and stamped onto
+    // the wrapper as own data properties so JS callers can touch
+    // `c.x`/`c.y` without round-tripping through the WASM boundary.
     // Web Image marshals JSNumber across the @JS boundary as a plain JS
     // number; raw `double` parameters arrive as Java thunks and don't
     // resolve to a primitive inside JS scope, so the ordinates are
@@ -189,16 +211,9 @@ public class API {
     }
 
     @JS("""
-        const c = { _jtsCoord: coord, x: x, y: y, z: z, m: m };
-        c.getX = () => x;
-        c.getY = () => y;
-        c.getZ = () => z;
-        c.getM = () => m;
-        c.copy = () => wasmts.geom.Coordinate.copy(c);
-        c.distance = (other) => wasmts.geom.Coordinate.distance(c, other);
-        c.distance3D = (other) => wasmts.geom.Coordinate.distance3D(c, other);
-        c.equals2D = (other) => wasmts.geom.Coordinate.equals2D(c, other);
-        c.equals3D = (other) => wasmts.geom.Coordinate.equals3D(c, other);
+        const c = Object.create(wasmts._protos.Coordinate);
+        c._jtsCoord = coord;
+        c.x = x; c.y = y; c.z = z; c.m = m;
         return c;
         """)
     static native JSObject makeJSCoordinate(Coordinate coord, JSNumber x, JSNumber y, JSNumber z, JSNumber m);
@@ -773,27 +788,27 @@ public class API {
         return result;
     }
 
-    // attachIntersectionMatrixOverrides — polymorphic set / setAtLeast
+    // extendIntersectionMatrixProto — polymorphic set / setAtLeast
     // (typeof-string check picks setFromString vs the (int, int, int)
     // form) and the matches → matchesPattern JS-name alias.
     @JS("""
-        obj.set = (row, col, value) => {
+        p.set = function(row, col, value) {
             if (typeof row === 'string') {
-                wasmts.geom.IntersectionMatrix.setFromString(obj, row);
+                wasmts.geom.IntersectionMatrix.setFromString(this, row);
             } else {
-                wasmts.geom.IntersectionMatrix.set(obj, row, col, value);
+                wasmts.geom.IntersectionMatrix.set(this, row, col, value);
             }
         };
-        obj.setAtLeast = (row, col, min) => {
+        p.setAtLeast = function(row, col, min) {
             if (typeof row === 'string') {
-                wasmts.geom.IntersectionMatrix.setAtLeastFromString(obj, row);
+                wasmts.geom.IntersectionMatrix.setAtLeastFromString(this, row);
             } else {
-                wasmts.geom.IntersectionMatrix.setAtLeast(obj, row, col, min);
+                wasmts.geom.IntersectionMatrix.setAtLeast(this, row, col, min);
             }
         };
-        obj.matches = (pattern) => wasmts.geom.IntersectionMatrix.matchesPattern(obj, pattern);
+        p.matches = function(pattern) { return wasmts.geom.IntersectionMatrix.matchesPattern(this, pattern); };
     """)
-    static native void attachIntersectionMatrixOverrides(JSObject obj);
+    static native void extendIntersectionMatrixProto(JSObject p);
 
     @JS("return [];")
     static native JSObject createJSArray();
@@ -906,9 +921,20 @@ public class API {
         };
     }
 
+    // Shared prototype for GeometryFactory wrappers. Called from main()
+    // after setupNamespaces().
     @JS("""
-        const f = { _jtsGeometryFactory: gf };
-        f.createPoint = (x, y, z, m) => wasmts.geom.GeometryFactory.createPoint(f, { x, y, z, m });
+        const p = {};
+        p.createPoint = function(x, y, z, m) {
+            return wasmts.geom.GeometryFactory.createPoint(this, { x, y, z, m });
+        };
+        (wasmts._protos = wasmts._protos || {}).GeometryFactory = p;
+        """)
+    static native void setupGeometryFactoryProto();
+
+    @JS("""
+        const f = Object.create(wasmts._protos.GeometryFactory);
+        f._jtsGeometryFactory = gf;
         return f;
         """)
     static native JSObject createJSGeometryFactoryFromInstance(GeometryFactory gf);
@@ -926,32 +952,32 @@ public class API {
         return jsObj.get("_jtsGeometryFactory", GeometryFactory.class);
     }
 
-    // attachCoordinateSequenceOverrides — getCoordinate(i) and
+    // extendCoordinateSequenceProto — getCoordinate(i) and
     // toCoordinateArray() return plain {x, y, z?, m?} objects (per-coord
     // NaN check), not wrapped Coordinate handles, matching the
     // `wasmts.geom.getCoordinates` contract on Geometry.
     @JS("""
         const ns = wasmts.geom.CoordinateSequence;
-        obj.getCoordinate = (i) => {
-            const o = { x: ns.getX(obj, i), y: ns.getY(obj, i) };
-            if (obj.hasZ()) {
-                const z = ns.getZ(obj, i);
+        p.getCoordinate = function(i) {
+            const o = { x: ns.getX(this, i), y: ns.getY(this, i) };
+            if (this.hasZ()) {
+                const z = ns.getZ(this, i);
                 if (!Number.isNaN(z)) o.z = z;
             }
-            if (obj.hasM()) {
-                const m = ns.getM(obj, i);
+            if (this.hasM()) {
+                const m = ns.getM(this, i);
                 if (!Number.isNaN(m)) o.m = m;
             }
             return o;
         };
-        obj.toCoordinateArray = () => {
-            const n = ns.size(obj);
+        p.toCoordinateArray = function() {
+            const n = ns.size(this);
             const result = new Array(n);
-            for (let i = 0; i < n; i++) result[i] = obj.getCoordinate(i);
+            for (let i = 0; i < n; i++) result[i] = this.getCoordinate(i);
             return result;
         };
     """)
-    static native void attachCoordinateSequenceOverrides(JSObject obj);
+    static native void extendCoordinateSequenceProto(JSObject p);
 
     // Helper to invoke JS filter callback matching JTS CoordinateSequenceFilter.filter(seq, i)
     @JS.Coerce
@@ -1237,8 +1263,8 @@ public class API {
     // end entry: ringOffsets indexes coords (coordinate units), partOffsets
     // indexes ringOffsets. An empty offsets array means "not used at this level"
     // — see exportCreateFromFlat. Two levels rather than a per-ring entry because
-    // every geometry returned to JS carries a createJSGeometry wrapper and its
-    // closures, so building ring by ring allocates a throwaway handle per ring.
+    // every geometry returned to JS carries a createJSGeometry wrapper, so
+    // building ring by ring allocates a throwaway handle per ring.
     //
     //   Point / MultiPoint / LineString  coords only
     //   MultiLineString                  ringOffsets delimits each line
@@ -1480,6 +1506,12 @@ public class API {
         // API_Generated.register(). Done up front so the hand-written
         // @JS exports below have live `wasmts.geom`, `wasmts.io`, etc.
         API_Generated.setupNamespaces();
+
+        // Shared prototypes for the hand-written wrappers. The generated
+        // wrapped-class protos are built by API_Generated.setupProtos()
+        // inside register().
+        setupCoordinateProto();
+        setupGeometryFactoryProto();
 
         // applyCoordinates: wasmts-specific coordinate replacement from a flat
         // numeric array. No JTS analog.
