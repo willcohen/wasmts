@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file. This change
 log follows the conventions of [keepachangelog.com](http://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed
+
+- Wrapper methods moved to one shared prototype per wrapped type
+  (`wasmts._protos.*`). A wrapper instance now carries only data
+  properties (the Java handle, `type` on Geometry, `x`/`y`/`z`/`m` on
+  Coordinate) instead of ~80 per-instance method closures.
+  Behavior changes:
+  - Detached method references (`const f = g.buffer; f(1)`) throw, as
+    with standard JS classes. Write `() => g.isEmpty()` or
+    `g.isEmpty.bind(g)`, or use the functional surface:
+    `wasmts.geom.buffer(g, 1)`.
+  - `Object.keys(wrapper)` and spread see only data properties;
+    `for...in` still sees the methods.
+  - Assignment to `wasmts._protos.<Type>` extends every wrapper of
+    that type.
+
 ## [0.1.0-alpha6] - 2026-07-22
 
 Adds a typed-array geometry surface for consumers holding coordinates in flat

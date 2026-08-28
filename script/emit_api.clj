@@ -32,20 +32,23 @@
      :class     fully-qualified Java class name
      :js-field  key on the JS-side wrapper object
      :helper    suffix used in helper names (createJS<helper> / extract<helper>
-                / wire<helper>Methods). Often the simple class name; the
+                / build<helper>Proto). Often the simple class name; the
                 abbreviated exceptions are MBC for MinimumBoundingCircle
                 and MDiam for MinimumDiameter.
-     :wire?     true when createJS<X> calls wire<X>Methods after the raw
-                wrap (readers / writers / PrecisionModel). False for value
-                / builder / utility wrappers with no method-shim surface.
-     :attach?   true when createJS<X> additionally calls
-                API.attach<X>Overrides (hand-written in API.java).
+     :wire?     true when the class has a method-shim surface (readers /
+                writers / PrecisionModel / the override classes): a
+                build<X>Proto stores a shared prototype and
+                createJS<X>Raw builds wrappers on it via Object.create.
+                False for value / builder / utility wrappers with no
+                method-shim surface, which keep the plain object literal.
+     :attach?   true when setupProtos() additionally passes the built
+                proto to API.extend<X>Proto (hand-written in API.java).
      :extra-params  ctor params beyond the underlying JTS class — used by
                     Geometry to add a `type: JSString` slot.
 
    Geometry, CoordinateSequence, Envelope, IntersectionMatrix appear here
-   with `:attach? true`; their createJS<X> bodies mix raw + wire +
-   hand-written attach<X>Overrides (relate-with-pattern,
+   with `:attach? true`; their shared protos mix auto-gen shims +
+   hand-written extend<X>Proto entries (relate-with-pattern,
    equalsExact-with-tolerance, polymorphic set / expandBy, etc.).
 
    Excluded entirely: Coordinate — irreducible JS-literal {x,y,z?,m?} vs
@@ -232,8 +235,8 @@
    {:class "org.locationtech.jts.util.PriorityQueue" :js-field "_jtsPriorityQueue" :helper "PriorityQueue"}
    {:class "org.locationtech.jts.util.Stopwatch" :js-field "_jtsStopwatch" :helper "Stopwatch"}
    {:class "org.locationtech.jts.util.UniqueCoordinateArrayFilter" :js-field "_jtsUniqueCoordinateArrayFilter" :helper "UniqueCoordinateArrayFilter"}
-   ;; Attach-override classes (createJS<X> calls wire<X>Methods + API.attach<X>Overrides;
-   ;; the attach<X>Overrides @JS body stays hand-written in API.java). Geometry adds an
+   ;; Override classes (setupProtos passes the built proto to API.extend<X>Proto;
+   ;; the extend<X>Proto @JS body stays hand-written in API.java). Geometry adds an
    ;; extra `type: JSString` ctor param + matching `type` field on the JS wrapper.
    {:class "org.locationtech.jts.geom.CoordinateSequence" :js-field "_jtsCoordSeq" :helper "CoordinateSequence" :wire? true :attach? true}
    {:class "org.locationtech.jts.geom.Envelope" :js-field "_jtsEnvelope" :helper "Envelope" :wire? true :attach? true}
@@ -923,20 +926,24 @@ public class API_Generated {
           "    static native void setupNamespaces();\n")
      body)))
 
-(defn- wire-decl
-  "Emit a `static native void wire<Name>Methods(JSObject obj)` whose @JS
-   body attaches one shim per in-scope instance method whose receiver
-   matches `class-pred` (a predicate over the entry's `:class`). For
-   the Geometry wire, pass `geometry-subtypes` so methods declared on
-   subtypes (Polygon.getExteriorRing, LineString.isClosed, etc.) come
-   along — they install at the collapsed `wasmts.geom.*` paths and
-   belong on the same JS handle.
+(defn- proto-decl
+  "Emit a `static native JSObject build<Name>Proto()` whose @JS body
+   builds the shared prototype for the class's JS wrappers: one shim per
+   in-scope instance method whose receiver matches `class-pred` (a
+   predicate over the entry's `:class`). For the Geometry proto, pass
+   `geometry-subtypes` so methods declared on subtypes
+   (Polygon.getExteriorRing, LineString.isClosed, etc.) come along —
+   they install at the collapsed `wasmts.geom.*` paths and belong on
+   the same JS handle.
 
-   The createJS<Name> wrapper in API.java calls this to replace ~50
-   lines of hand-written shims with one auto-gen line. Hand-written
-   specials (polymorphic dispatch, default args, JS-name aliases) live
-   in a separate `attach*` @JS native in API.java and run after the
-   wires."
+   Shims are plain `function`s dispatching on `this`, assigned once to
+   a prototype stored at `wasmts._protos.<Name>`. createJS<Name>Raw
+   builds each wrapper with Object.create on that proto, so a wrapper
+   instance carries only its own data properties (the Java handle) and
+   allocates no per-instance closures. Hand-written specials
+   (polymorphic dispatch, default args, JS-name aliases) live in a
+   separate `extend<Name>Proto` @JS native in API.java and run once
+   against the proto, from the emitted setupProtos()."
   [name class-pred resolved]
   (let [shims (->> resolved
                    (filter (fn [[k v]]
@@ -945,69 +952,78 @@ public class API_Generated {
                    (map (fn [[k v]]
                           (let [path (js-path k (:js-path v))
                                 method-name (last (str/split path #"\."))]
-                            (format "obj.%s = (...args) => %s(obj, ...args);"
+                            (format "p.%s = function(...args) { return %s(this, ...args); };"
                                     method-name path)))))]
     (when (seq shims)
       (format (str "    @JS(\"\"\"%n"
+                   "        const p = {};%n"
                    "        %s%n"
+                   "        (wasmts._protos = wasmts._protos || {}).%s = p;%n"
+                   "        return p;%n"
                    "    \"\"\")%n"
-                   "    static native void wire%sMethods(JSObject obj);%n")
-              (str/join "\n        " shims) name))))
+                   "    static native JSObject build%sProto();%n")
+              (str/join "\n        " shims) name name))))
 
 (defn- wrapped-class-decl
   "Emit `createJS<X>Raw` + `createJS<X>` + `extract<X>` for one
    `js-wrapper-classes` entry. Slots beyond the basics:
 
-     :wire?         when true, createJS<X> calls wire<X>Methods(obj)
-                    after the raw wrap.
-     :attach?       when true, createJS<X> calls API.attach<X>Overrides(obj)
-                    after the wire (cross-class call — attach<X>Overrides
-                    bodies are irreducibly hand-written and live in
-                    API.java; this slot lets the wire / auto-ctor template
-                    cover the four attach-override classes too: Geometry,
-                    CoordinateSequence, Envelope, IntersectionMatrix).
+     :wire?         when true, the class has a method-shim surface: a
+                    build<X>Proto declaration (see proto-decl) stores a
+                    shared prototype at `wasmts._protos.<X>`, and the
+                    createJS<X>Raw body builds each wrapper with
+                    Object.create on that proto instead of an object
+                    literal. The wrapper carries only its own data
+                    properties; methods resolve through the prototype
+                    chain. False for value / builder / utility wrappers
+                    with no method-shim surface, which keep the plain
+                    `{ _jtsX: x }` literal.
+     :attach?       when true, the emitted setupProtos() passes the built
+                    proto to API.extend<X>Proto (cross-class call —
+                    extend<X>Proto bodies are irreducibly hand-written
+                    and live in API.java; this slot covers the four
+                    override classes: Geometry, CoordinateSequence,
+                    Envelope, IntersectionMatrix).
      :extra-params  optional vector of {:type :name} maps prepended to
                     the createJS<X>Raw / createJS<X> Java parameter
                     list. Each extra param's JS-side identity passes
-                    through to the @JS body unchanged (`name: name`) and
-                    becomes the public JS field on the wrapper. The
-                    main param is always called `x` in the emitted
-                    code; the @JS body ends with `<js-field>: x`. Used
-                    for Geometry, whose signature is `createJSGeometry(
-                    JSString type, Geometry x)` with @JS body
-                    `{type: type, _jtsGeom: x}`. Entries without
+                    through to the @JS body unchanged and becomes a
+                    public own data property on the wrapper. The main
+                    param is always called `x` in the emitted code; the
+                    @JS body always assigns `<js-field> = x`. Used for
+                    Geometry, whose signature is `createJSGeometry(
+                    JSString type, Geometry x)`. Entries without
                     `:extra-params` degenerate to the single-arg form
                     that 24 of the 28 wrapped classes use.
 
-   entries with `:wire?` true (`:wire?` true) depend on the corresponding
-   `wire<X>Methods` declaration being emitted earlier in this file; if
+   entries with `:wire?` true depend on the corresponding
+   `build<X>Proto` declaration being emitted earlier in this file; if
    every method on a wrapped class gets `:skip`'d in manual.edn the
-   wire method disappears and the createJS<X> call site fails to
+   proto builder disappears and the setupProtos() call site fails to
    compile. Latent fragility rather than a real risk today."
-  [{:keys [class js-field helper wire? attach? extra-params]}]
+  [{:keys [class js-field helper wire? extra-params]}]
   (let [extras       (or extra-params [])
         java-params  (str/join ", " (concat (for [{:keys [type name]} extras]
                                               (str type " " name))
                                             [(str class " x")]))
-        js-body      (str/join ", " (concat (for [{:keys [name]} extras]
-                                              (str name ": " name))
-                                            [(str js-field ": x")]))
-        call-args    (str/join ", " (concat (map :name extras) ["x"]))
-        wire-line    (if wire?
-                       (format "        wire%sMethods(obj);%n" helper)
-                       "")
-        attach-line  (if attach?
-                       (format "        API.attach%sOverrides(obj);%n" helper)
-                       "")]
+        raw-body     (if wire?
+                       (str/join " " (concat
+                                      [(format "const o = Object.create(wasmts._protos.%s);" helper)]
+                                      (for [{:keys [name]} extras]
+                                        (format "o.%s = %s;" name name))
+                                      [(format "o.%s = x;" js-field)
+                                       "return o;"]))
+                       (format "return { %s };"
+                               (str/join ", " (concat (for [{:keys [name]} extras]
+                                                        (str name ": " name))
+                                                      [(str js-field ": x")]))))
+        call-args    (str/join ", " (concat (map :name extras) ["x"]))]
     (format
-     (str "    @JS(\"return { %s };\")%n"
+     (str "    @JS(\"%s\")%n"
           "    static native JSObject createJS%sRaw(%s);%n"
           "%n"
           "    static JSObject createJS%s(%s) {%n"
-          "        JSObject obj = createJS%sRaw(%s);%n"
-          "%s"
-          "%s"
-          "        return obj;%n"
+          "        return createJS%sRaw(%s);%n"
           "    }%n"
           "%n"
           "    static %s extract%s(Object obj) {%n"
@@ -1017,12 +1033,10 @@ public class API_Generated {
           "        JSObject jsObj = (JSObject) obj;%n"
           "        return jsObj.get(\"%s\", %s.class);%n"
           "    }%n")
-     js-body
+     raw-body
      helper java-params
      helper java-params
      helper call-args
-     wire-line
-     attach-line
      class helper
      class
      class
@@ -1101,26 +1115,26 @@ public class API_Generated {
     (doseq [n arities] (.append sb (installer-decl n)))
     (.append sb "\n    // ---- constant installers ----\n\n")
     (.append sb constant-installer-decls)
-    (.append sb "\n    // ---- instance-method wires ----\n\n")
-    (.append sb (or (wire-decl "Geometry" geometry-subtypes resolved) ""))
-    (.append sb (or (wire-decl "CoordinateSequence"
-                               #{"org.locationtech.jts.geom.CoordinateSequence"}
-                               resolved) ""))
-    (.append sb (or (wire-decl "Envelope"
-                               #{"org.locationtech.jts.geom.Envelope"}
-                               resolved) ""))
-    (.append sb (or (wire-decl "IntersectionMatrix"
-                               #{"org.locationtech.jts.geom.IntersectionMatrix"}
-                               resolved) ""))
-    (.append sb (or (wire-decl "PrecisionModel"
-                               #{"org.locationtech.jts.geom.PrecisionModel"}
-                               resolved) ""))
-    ;; Reader / writer fluent shims. Each createJS<Name> in API.java
-    ;; calls wire<Name>Methods to install instance-method shims (e.g. `.read`,
-    ;; `.write`, `.setEncodeCRS`) on the wrapped JS handle. Replaces the
-    ;; hand-written `r.read = (...args) => ...` blocks. Any new auto-gen
-    ;; install on these classes auto-propagates to the fluent JS handle.
-    (doseq [[wire-name fqn]
+    (.append sb "\n    // ---- shared wrapper prototypes ----\n\n")
+    (.append sb (or (proto-decl "Geometry" geometry-subtypes resolved) ""))
+    (.append sb (or (proto-decl "CoordinateSequence"
+                                #{"org.locationtech.jts.geom.CoordinateSequence"}
+                                resolved) ""))
+    (.append sb (or (proto-decl "Envelope"
+                                #{"org.locationtech.jts.geom.Envelope"}
+                                resolved) ""))
+    (.append sb (or (proto-decl "IntersectionMatrix"
+                                #{"org.locationtech.jts.geom.IntersectionMatrix"}
+                                resolved) ""))
+    (.append sb (or (proto-decl "PrecisionModel"
+                                #{"org.locationtech.jts.geom.PrecisionModel"}
+                                resolved) ""))
+    ;; Reader / writer fluent shims. Each build<Name>Proto stores the
+    ;; instance-method shims (e.g. `.read`, `.write`, `.setEncodeCRS`)
+    ;; on one shared prototype; createJS<Name>Raw builds wrappers on it.
+    ;; Any new auto-gen install on these classes auto-propagates to the
+    ;; fluent JS handle.
+    (doseq [[proto-name fqn]
             [["GeoJsonReader" "org.locationtech.jts.io.geojson.GeoJsonReader"]
              ["GeoJsonWriter" "org.locationtech.jts.io.geojson.GeoJsonWriter"]
              ["WKTReader"     "org.locationtech.jts.io.WKTReader"]
@@ -1131,7 +1145,18 @@ public class API_Generated {
              ["KMLReader"     "org.locationtech.jts.io.kml.KMLReader"]
              ["TWKBReader"    "org.locationtech.jts.io.twkb.TWKBReader"]
              ["WKBWriter"     "org.locationtech.jts.io.WKBWriter"]]]
-      (.append sb (or (wire-decl wire-name #{fqn} resolved) "")))
+      (.append sb (or (proto-decl proto-name #{fqn} resolved) "")))
+    ;; Build every shared proto once, then let API.java's hand-written
+    ;; extend<X>Proto add the override entries for the :attach? classes.
+    ;; Runs from register() right after setupNamespaces(), before any
+    ;; wrapper can be constructed.
+    (.append sb "\n    private static void setupProtos() {\n")
+    (doseq [{:keys [helper wire? attach?]} js-wrapper-classes
+            :when wire?]
+      (.append sb (if attach?
+                    (format "        API.extend%sProto(build%sProto());\n" helper helper)
+                    (format "        build%sProto();\n" helper))))
+    (.append sb "    }\n")
     (.append sb "\n    // ---- wrapped-class wrappers ----\n\n")
     (doseq [entry js-wrapper-classes]
       (.append sb (wrapped-class-decl entry))
@@ -1143,6 +1168,7 @@ public class API_Generated {
     (.append sb "\n    // ---- entry point ----\n\n")
     (.append sb "    public static void register() {\n")
     (.append sb "        setupNamespaces();\n")
+    (.append sb "        setupProtos();\n")
     (doseq [s register-stmts] (.append sb s) (.append sb "\n"))
     (.append sb "    }\n}\n")
     [(.toString sb) warnings]))
