@@ -1,10 +1,11 @@
 # Third-Party Notices
 
 The published npm package `@wcohen/wasmts` distributes a WebAssembly binary
-(`dist/wasmts.js.wasm`) and a JavaScript loader (`dist/wasmts.js`), both
-produced by GraalVM Native Image. The binary statically embeds code from the
-projects listed below. Each license is reproduced in the file named under
-"License text".
+(`dist/wasmts.js.wasm`), a JavaScript loader (`dist/wasmts.js`), and a
+TypeScript declaration file (`dist/wasmts.d.ts`). GraalVM Native Image produces
+the binary and the loader. The binary statically embeds code from the projects
+listed below. The declaration file embeds JTS documentation text. Each license
+is reproduced in the file named under "License text".
 
 ## JTS Topology Suite
 
@@ -16,6 +17,13 @@ projects listed below. Each license is reproduced in the file named under
 
 JTS provides the geometry model, the spatial operations, and the WKT, WKB, KML,
 TWKB, and GeoJSON readers and writers exposed by this package.
+
+`dist/wasmts.d.ts` also contains JTS documentation text. The generator
+(`script/javadoc_index.clj`) reads the javadoc comments from the JTS sources jar
+(`jts-core-1.20.0-sources.jar`) and writes them into the declaration file as
+TSDoc comments. The text keeps its original meaning. Only its markup changes,
+from HTML to markdown. The declaration file is therefore a derivative work of
+JTS and is licensed under EPL-2.0 OR EDL-1.0, the same as JTS.
 
 ## json-simple
 
@@ -52,6 +60,15 @@ extending the GPL to code that merely uses it.
 
 The bridge code in this repository (`java/src/main/java/net/willcohen/wasmts/`,
 including generated sources) is licensed under EPL-2.0 OR EDL-1.0 to match JTS.
+The generated TypeScript declarations (`types/wasmts.d.ts`) carry the same
+license, because they contain JTS documentation text.
+
+## Build-time only
+
+`com.github.javaparser/javaparser-core` (Apache License 2.0 OR LGPL-3.0) parses
+the JTS sources jar during code generation. It is a build dependency of this
+repository. The npm package does not contain it, and the WebAssembly binary does
+not embed it.
 
 ## Not included in the npm package
 

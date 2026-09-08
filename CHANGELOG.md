@@ -5,21 +5,38 @@ log follows the conventions of [keepachangelog.com](http://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- `dist/wasmts.d.ts` carries the JTS documentation as TSDoc, so editors
+  show argument meanings on hover.
+- `bb check:javadoc-links` checks each `@see` anchor against the
+  published javadoc. Needs network access, so it is not in `bb gen:all`
+  or CI.
+
 ### Changed
 
 - Wrapper methods moved to one shared prototype per wrapped type
   (`wasmts._protos.*`). A wrapper instance now carries only data
   properties (the Java handle, `type` on Geometry, `x`/`y`/`z`/`m` on
-  Coordinate) instead of ~80 per-instance method closures.
-  Behavior changes:
-  - Detached method references (`const f = g.buffer; f(1)`) throw, as
-    with standard JS classes. Write `() => g.isEmpty()` or
-    `g.isEmpty.bind(g)`, or use the functional surface:
+  Coordinate) instead of ~80 per-instance method closures. Behavior
+  changes:
+  - Detached method references (`const f = g.buffer; f(1)`) throw. Write
+    `() => g.isEmpty()`, `g.isEmpty.bind(g)`, or
     `wasmts.geom.buffer(g, 1)`.
   - `Object.keys(wrapper)` and spread see only data properties;
     `for...in` still sees the methods.
   - Assignment to `wasmts._protos.<Type>` extends every wrapper of
     that type.
+- `bb test` and `clj-kondo` block CI now.
+- The buffer, simplifier and closest-point methods are back under
+  differential test against JVM JTS, and the `Coordinate[]` comparison
+  now covers Z. Both are test-suite changes; no shipped behavior moved.
+
+### Fixed
+
+- `dist/wasmts.d.ts` type-checks. It referenced `CoordinateSequence`,
+  `Densifier`, `GeometryFixer` and `GeometryPrecisionReducer` without
+  declaring them.
 
 ## [0.1.0-alpha6] - 2026-07-22
 

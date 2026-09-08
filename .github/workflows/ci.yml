@@ -58,6 +58,15 @@ jobs:
         with:
           bb: latest
           cli: latest
+          clj-kondo: 2026.08.04
+
+      # Before the GraalVM build, so a lint failure costs seconds not minutes.
+      # clj-kondo exits non-zero on warnings too, so both block. Pinned, unlike
+      # bb/cli above: a release that adds a default linter would turn CI red
+      # with no code change. Covers tracked sources only; the generated defspec
+      # file is gitignored until `mvn package` runs codegen.
+      - name: Lint Clojure sources (clj-kondo)
+        run: clj-kondo --lint script test
 
       - name: Native Image host prerequisites
         run: sudo apt-get update && sudo apt-get install -y build-essential zlib1g-dev
@@ -126,16 +135,20 @@ jobs:
       - name: Node test suite (npm test)
         run: npm test
 
-      # Property-based differential suite comparing the wasm build against JVM JTS.
-      # Non-blocking: it is fp-sensitive and occasionally flakes on the CI x64 JVM
-      # oracle (e.g. TopologyPreservingSimplifier), so a failure surfaces a warning
-      # annotation for review but does not break CI. npm test above is the hard gate.
-      - name: Differential test suite (bb test)
-        id: bbtest
-        continue-on-error: true
-        run: bb test
-
-      - name: Flag differential test failure (non-blocking)
-        if: steps.bbtest.outcome == 'failure'
+      # Checks that the javadoc rendered into wasmts.d.ts still reaches the
+      # TypeScript language service. `npm install` rather than `npm ci`: the
+      # lockfile is gitignored, and typescript is the only dep this needs.
+      - name: Declaration doc comments (npm run test:types)
         run: |
-          echo "::warning title=Differential suite (bb test) failed::Non-blocking. Likely the known fp-sensitive property-test flake; check the bb test step log to rule out a real wasm-vs-JVM divergence."
+          npm install --no-audit --no-fund
+          npm run test:types
+
+      # Property-based differential suite comparing the wasm build against JVM JTS.
+      # Blocking. It was non-blocking from the first CI commit, when
+      # TopologyPreservingSimplifier tie-broke differently on symmetric inputs.
+      # The 2026-06 divergence work fixed that per method, so the blanket
+      # exemption only hid real regressions. A method that diverges now gets a
+      # manual.edn entry: :gen-overrides to remove the degeneracy, :compare to
+      # check the invariant that holds, or :test-skip to quarantine it.
+      - name: Differential test suite (bb test)
+        run: bb test

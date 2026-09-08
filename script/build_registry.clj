@@ -14,6 +14,7 @@
    [clojure.java.io :as io]
    [clojure.pprint :as pprint]
    [clojure.string :as str]
+   [javadoc-index :as jdoc]
    [param-names :as pn]
    [source-param-names :as spn])
   (:import
@@ -268,11 +269,9 @@
          "org.locationtech.jts.geom.GeometryCollection"}
        t)))
 
-(def ^:private envelope-class        "org.locationtech.jts.geom.Envelope")
 (def ^:private precision-model-class "org.locationtech.jts.geom.PrecisionModel")
 (def ^:private coordinate-class      "org.locationtech.jts.geom.Coordinate")
 (def ^:private lineseg-class         "org.locationtech.jts.geom.LineSegment")
-(def ^:private geom-factory-class    "org.locationtech.jts.geom.GeometryFactory")
 (def ^:private point-class           "org.locationtech.jts.geom.Point")
 (def ^:private linestring-class      "org.locationtech.jts.geom.LineString")
 (def ^:private js-wrappers-built-from-geometry
@@ -722,9 +721,7 @@
 (def ^:private static-dispatch-classes
   "Classes whose static methods route through the generic :static-call
    dispatch template. :static-int-field / :static-char-field entries
-   are auto-excluded by the hoisted rule's `field?` guard;
-   :static-collection->geom is auto-excluded because its
-   Collection<Geometry> param isn't coercible."
+   are auto-excluded by the hoisted rule's `field?` guard."
   #{"org.locationtech.jts.algorithm.Angle"
     "org.locationtech.jts.algorithm.Area"
     "org.locationtech.jts.algorithm.CGAlgorithms"
@@ -969,96 +966,6 @@
 (def ^:private string-class          "java.lang.String")
 (def ^:private byte-array-class      "byte[]")
 
-(def ^:private static-utility-classes
-  "Whitelist of JTS static-utility classes the codegen exposes today.
-   Restricted to classes designed by JTS as static-only (Angle, Distance,
-   Centroid, ...). Value-type classes with parallel static/instance APIs
-   (Triangle, LineSegment) do NOT belong here — their statics collide
-   with their instances at the JS path, and dedup-by-path silently drops
-   one. For per-method opt-in on those classes (Triangle.angleBisector,
-   etc.), use manual.edn :static-only-methods — entries that collide on
-   the JS path with their instance counterpart still need a :hints
-   :js-path entry to coexist."
-  #{"org.locationtech.jts.algorithm.Angle"
-    "org.locationtech.jts.algorithm.Distance"
-    "org.locationtech.jts.algorithm.Centroid"
-    "org.locationtech.jts.algorithm.Length"
-    "org.locationtech.jts.algorithm.Orientation"
-    "org.locationtech.jts.algorithm.Area"
-    "org.locationtech.jts.algorithm.CGAlgorithms3D"
-    "org.locationtech.jts.algorithm.InteriorPoint"
-    "org.locationtech.jts.algorithm.InteriorPointArea"
-    "org.locationtech.jts.algorithm.InteriorPointLine"
-    "org.locationtech.jts.algorithm.InteriorPointPoint"
-    "org.locationtech.jts.algorithm.PointLocation"
-    "org.locationtech.jts.geom.CoordinateArrays"
-    "org.locationtech.jts.geom.Dimension"
-    "org.locationtech.jts.io.geojson.OrientationTransformer"
-    "org.locationtech.jts.math.MathUtil"
-    "org.locationtech.jts.operation.buffer.BufferOp"
-    "org.locationtech.jts.operation.buffer.OffsetCurve"
-    "org.locationtech.jts.operation.distance.DistanceOp"
-    "org.locationtech.jts.triangulate.quadedge.TrianglePredicate"
-    ;; 55 pure-static-utility classes (also in
-    ;; static-dispatch-classes). Adding here gates the per-shape
-    ;; classify rules' static-allowed? branch in case any classify-
-    ;; shape per-shape rule is still alive for that signature.
-    "org.locationtech.jts.algorithm.CGAlgorithms"
-    "org.locationtech.jts.algorithm.CGAlgorithmsDD"
-    "org.locationtech.jts.algorithm.Intersection"
-    "org.locationtech.jts.algorithm.PolygonNodeTopology"
-    "org.locationtech.jts.algorithm.Rectangle"
-    "org.locationtech.jts.algorithm.RobustDeterminant"
-    "org.locationtech.jts.algorithm.distance.DistanceToPoint"
-    "org.locationtech.jts.algorithm.hull.HullTriangulation"
-    "org.locationtech.jts.algorithm.match.SimilarityMeasureCombiner"
-    "org.locationtech.jts.awt.FontGlyphReader"
-    "org.locationtech.jts.geom.CoordinateSequences"
-    "org.locationtech.jts.geom.Coordinates"
-    "org.locationtech.jts.geom.Location"
-    "org.locationtech.jts.geom.Position"
-    "org.locationtech.jts.geom.Quadrant"
-    "org.locationtech.jts.geom.util.AffineTransformationFactory"
-    "org.locationtech.jts.geom.util.GeometryMapper"
-    "org.locationtech.jts.geom.util.PolygonalExtracter"
-    "org.locationtech.jts.index.chain.MonotoneChainBuilder"
-    "org.locationtech.jts.index.quadtree.IntervalSize"
-    "org.locationtech.jts.index.strtree.EnvelopeDistance"
-    "org.locationtech.jts.io.ByteOrderValues"
-    "org.locationtech.jts.io.Ordinate"
-    "org.locationtech.jts.io.twkb.Varint"
-    "org.locationtech.jts.math.Matrix"
-    "org.locationtech.jts.noding.Octant"
-    "org.locationtech.jts.noding.SegmentPointComparator"
-    "org.locationtech.jts.noding.SegmentStringUtil"
-    "org.locationtech.jts.operation.buffer.validate.DistanceToPointFinder"
-    "org.locationtech.jts.operation.distance.FacetSequenceTreeBuilder"
-    "org.locationtech.jts.operation.overlayng.CoverageUnion"
-    "org.locationtech.jts.operation.overlayng.EdgeMerger"
-    "org.locationtech.jts.operation.overlayng.OverlayNGRobust"
-    "org.locationtech.jts.operation.overlayng.OverlayUtil"
-    "org.locationtech.jts.operation.overlayng.PrecisionReducer"
-    "org.locationtech.jts.operation.overlayng.PrecisionUtil"
-    "org.locationtech.jts.operation.overlayng.UnaryUnionNG"
-    "org.locationtech.jts.operation.relateng.DimensionLocation"
-    "org.locationtech.jts.operation.relateng.PolygonNodeConverter"
-    "org.locationtech.jts.operation.relateng.RelatePredicate"
-    "org.locationtech.jts.operation.relateng.TopologyPredicateTracer"
-    "org.locationtech.jts.precision.EnhancedPrecisionOp"
-    "org.locationtech.jts.precision.PointwisePrecisionReducerTransformer"
-    "org.locationtech.jts.precision.PrecisionReducerTransformer"
-    "org.locationtech.jts.shape.fractal.HilbertCode"
-    "org.locationtech.jts.shape.fractal.MortonCode"
-    "org.locationtech.jts.triangulate.polygon.TriDelaunayImprover"
-    "org.locationtech.jts.triangulate.quadedge.QuadEdgeUtil"
-    "org.locationtech.jts.triangulate.tri.TriangulationBuilder"
-    "org.locationtech.jts.util.Assert"
-    "org.locationtech.jts.util.CollectionUtil"
-    "org.locationtech.jts.util.Memory"
-    "org.locationtech.jts.util.NumberUtil"
-    "org.locationtech.jts.util.StringUtil"
-    "org.locationtech.jts.util.TestBuilderProxy"})
-
 ;; coerce-arg-expr in emit_api.clj handles this set of param
 ;; types. Mirror the set here so the generic classifier rules only fire
 ;; on entries the dispatch templates can actually emit.
@@ -1191,15 +1098,8 @@
    object, so only the Geometry base entry needs to install.
 
    `params` lives in the key (part of the entry's identity), `returns`
-   lives in the value.
-
-   `static-only-methods` is an optional per-class opt-in for static
-   methods on value-type classes (Triangle, LineSegment) that aren't
-   on the static-utility-classes whitelist. Same key shape as :skip:
-   class symbol -> #{method-name} | #{[method-name params-vec]}. A
-   classified entry still has to dodge a JS-path collision with any
-   instance variant via a :hints :js-path entry."
-  [{:keys [class method params] :as k} {:keys [returns static? throws field? generic-params param-override]} static-only-methods]
+   lives in the value."
+  [{:keys [class method params] :as k} {:keys [returns static? throws field? generic-params param-override]}]
   ;; when :generic-params is present (auto-captured or merged
   ;; from a manual :elem-type hint), use it as the "effective" param list.
   ;; Same for :returns :generic-type. Erased forms remain available
@@ -1225,12 +1125,7 @@
         throws-parse?        (contains? (set throws) parse-exception-class)
         coord?               (= r coordinate-class)
         ctor?                (= method "<init>")
-        static-method?       (and static? (not ctor?))
-        static-allowed?      (let [entries (get static-only-methods (symbol class))]
-                               (or (static-utility-classes class)
-                                   (boolean (and entries
-                                                 (or (entries method)
-                                                     (entries [method params]))))))]
+        static-method?       (and static? (not ctor?))]
     (cond
       ;; Generic template-engine classifier rules, hoisted so they fire first
       ;; for classes in `*-dispatch-classes`. Guards:
@@ -1284,19 +1179,6 @@
       ;; that narrows the Object position to Geometry; no per-shape rule
       ;; needed here.
 
-      ;; Geometry.getUserData() / setUserData(Object) — raw Object
-      ;; passthrough. Object return / Object param are not coercible so
-      ;; the hoisted rule skips; these rules route through
-      ;; {:kind :receiver-call} directly. The "java.lang.Object"
-      ;; return-type-wrappers entry is identity; coerce-arg-expr emits
-      ;; `(Object) aN` for the setter param.
-      (and geom-receiver? (= r "java.lang.Object") (empty? params))
-      {:kind :receiver-call}
-
-      (and geom-receiver? (= r "void")
-           (= 1 (count params)) (= "java.lang.Object" (first params)))
-      {:kind :receiver-call}
-
       ;; Geometry.getCoordinate() returns null on empty geometries.
       ;; Route through {:kind :receiver-call} with :return-null-safe?
       ;; true so the receiver-call template post-processes the wrap
@@ -1306,16 +1188,6 @@
       ;; skips it (otherwise it would produce the non-OrNull form).
       (and geom-receiver? coord? (empty? params))
       {:kind :receiver-call :return-null-safe? true}
-
-      ;; Geometry.getFactory() returns GeometryFactory, which is not
-      ;; in auto-ctor-classes (extractGeometryFactory lives
-      ;; in API.java, not API_Generated). coercible-return? is false
-      ;; so the hoisted rule skips. The per-shape defmethod uses
-      ;; createJSGeometryFactoryFromInstance (vs the generic
-      ;; createJSGeometryFactory ctor wrap).
-      (and geom-receiver? (= r geom-factory-class)
-           (empty? params))
-      :geometry-get-factory
 
       ;; Geometry.apply(*Filter) JS-callback marshalling. The 4 *Filter
       ;; param types are not coercible so the hoisted rule skips. The
@@ -1391,18 +1263,8 @@
            (= r cs-class) (empty? params))
       :geometry-get-coordinate-sequence
 
-      ;; Three bespoke static rules stay below — the generic :static-call
-      ;; rule can't model them:
-      ;;   - :static-collection->geom: Collection<Geometry> param needs the
-      ;;     Arrays.asList(extractGeometryArray(...)) adapter; Collection isn't
-      ;;     in param-types-with-extractors, so the generic rejects it.
-      ;;   - :static-int-field / :static-char-field: Dimension constants are
-      ;;     static FIELDS, not methods; the `field?` guard on the generic
-      ;;     rule lets them fall through here.
-      (and static-method? static-allowed? (jts-geometry? r)
-           (= params ["java.util.Collection"]))
-      :static-collection->geom
-
+      ;; Constants are static fields, not methods. The `field?` guard on
+      ;; the generic :static-call rule lets them fall through to here.
       (and field? (= r "int"))
       :static-int-field
 
@@ -1425,7 +1287,7 @@
 
    - Class-keyed (`<class-symbol>` -> `:all | #{method | [method params]} | :keep`).
      Matches a specific class, optionally narrowed to method names or
-     overloads. Same key shape as :static-only-methods. `:keep` is a
+     overloads. `:keep` is a
      sentinel that means \"never skip via this class\" — it exempts the
      class from any package-prefix skip that would otherwise catch it.
 
@@ -1448,9 +1310,8 @@
       (cond
         (= class-entry :keep) false
         (= class-entry :all)  true
-        (set? class-entry)    (boolean
-                                (or (contains? class-entry method)
-                                    (contains? class-entry [method params])))
+        (set? class-entry)    (or (contains? class-entry method)
+                                  (contains? class-entry [method params]))
         :else false)
       ;; No class-keyed entry: fall back to package-prefix wildcard match.
       (boolean
@@ -1575,7 +1436,7 @@
    :shape value is either a keyword (per-shape dispatch via legacy
    defmethod) or a structured map `{:kind :ctor/:static-call/
    :receiver-call}` from the hoisted template-engine classifier rules."
-  [raw {:keys [skip hints static-only-methods elem-type] :as _overrides}]
+  [raw {:keys [skip hints elem-type] :as _overrides}]
   (let [util-classes     (utility-class-names raw)
         geom-method-keys (geometry-base-method-keys raw)
         elem-lookup  (fn [k]
@@ -1622,7 +1483,7 @@
 
                         :else
                         (assoc hinted
-                               :shape (classify-shape k hinted static-only-methods)
+                               :shape (classify-shape k hinted)
                                :tags  #{}))]
           (assoc acc k tagged)))
       {}
@@ -1655,12 +1516,26 @@
     ;; default (Object) aN cast.
     :param-override
     ;; per-method differential-compare strategy override (emit_tests). One
-    ;; of :same-shape / :length / :area. Replaces the default return-type
-    ;; compare for construction methods whose port output is geometrically
-    ;; correct but not vertex-for-vertex identical to the JVM oracle (a
-    ;; near-duplicate vertex, or a tie-broken non-canonical representative
-    ;; on a symmetric input). See manual.edn :hints.
-    :compare})
+    ;; of :same-shape / :length / :area / :clearance / :pair-distance.
+    ;; Replaces the default return-type compare for construction methods
+    ;; whose port output is geometrically correct but not vertex-for-vertex
+    ;; identical to the JVM oracle (a near-duplicate vertex, or a tie-broken
+    ;; non-canonical representative on a symmetric input). See manual.edn
+    ;; :hints.
+    :compare
+    ;; per-method well-defined-reference guard (emit_tests). Boolean, and
+    ;; composes with :compare rather than replacing it: the comparison runs
+    ;; only where the JVM's own answer holds under a small perturbation of
+    ;; every geometry the call binds. For methods that select between two
+    ;; valid outputs on the last bit of an intermediate, where the port can
+    ;; differ without either side being wrong. See manual.edn :hints.
+    :jvm-stable
+    ;; javadoc for this member, from the sources jar. Shape:
+    ;; {:desc "..." :params [["name" "text"] ...] :returns "..."
+    ;;  :throws [["Type" "text"] ...] :from "<class-fqn>"}. Markup stays as
+    ;; javadoc wrote it, for each emitter to render. :from appears only on
+    ;; an inherited doc. Absent where JTS documents nothing.
+    :doc})
 
 (defn validate
   "Throw on structurally broken registry entries. Returns the registry
@@ -1776,7 +1651,7 @@
   (let [f (io/file "manual.edn")]
     (if (.exists f)
       (edn/read-string (slurp f))
-      {:skip {} :hints {} :static-only-methods {} :elem-type {}})))
+      {:skip {} :hints {} :elem-type {}})))
 
 (defn- apply-elem-type-hint
   "merge a manual `:elem-type` hint into an entry's
@@ -1814,6 +1689,43 @@
       gp-changed? (assoc :generic-params gp-merged)
       ret-merged  (assoc-in [:returns :generic-type] ret-merged))))
 
+(defn attach-docs
+  "Add `:doc` to every entry the JTS javadoc covers. Entries JTS leaves
+   undocumented keep no `:doc` key.
+
+   A separate pass from `reflect-one` so the doc index is built once for
+   the whole registry instead of once per class.
+
+   Throws when an entry has javadoc that no single overload matched and is
+   not listed in (manual.edn :javadoc-ambiguous). Such an entry emits with no
+   docs at all, so a codegen defect is indistinguishable from a gap in JTS.
+   This used to be a stderr warning, which nothing compared against anything,
+   so a regression that doubled the count read the same as the status quo."
+  [registry known-ambiguous]
+  (let [index (jdoc/build-index)
+        out   (reduce-kv
+               (fn [acc {:keys [class method params] :as k} v]
+                 (assoc acc k (if-let [d (jdoc/lookup index class method params)]
+                                ;; :types is index-internal, and would bloat
+                                ;; registry.edn.
+                                (assoc v :doc (dissoc d :types))
+                                v)))
+               {}
+               registry)
+        amb (->> (keys registry)
+                 (filter (fn [{:keys [class method params]}]
+                           (jdoc/undisambiguated index class method params)))
+                 (map (fn [{:keys [class method params]}] [class method params]))
+                 (sort))]
+    (when (not= (set amb) (set known-ambiguous))
+      (throw (ex-info (str "(manual.edn :javadoc-ambiguous) does not match the entries whose "
+                           "javadoc no single overload matched. Make it exactly:\n"
+                           (str/join "\n" (map #(str "    " (pr-str %)) amb))
+                           "\nA new entry is either a javadoc-index overload-matching defect or a "
+                           "gap in JTS; an entry that dropped out now resolves and its line goes.")
+                      {:actual amb :listed known-ambiguous})))
+    out))
+
 (defn- canonicalise
   "Produce a sort-stable form so registry.edn diffs cleanly across runs."
   [registry]
@@ -1830,11 +1742,13 @@
 ;; Entry points
 
 (defn build []
-  (-> (read-class-list)
-      reflect-classes
-      (classify (read-overrides))
-      validate
-      canonicalise))
+  (let [overrides (read-overrides)]
+    (-> (read-class-list)
+        reflect-classes
+        (classify overrides)
+        (attach-docs (:javadoc-ambiguous overrides))
+        validate
+        canonicalise)))
 
 (defn- shape-label
   "Stable text label for a shape. structured map shapes use
@@ -1848,8 +1762,14 @@
     :else        (str s)))
 
 (defn- summary [registry]
-  (let [shape-counts (->> registry vals (map :shape) (map shape-label) frequencies (into (sorted-map)))]
+  (let [shape-counts (->> registry vals (map :shape) (map shape-label) frequencies (into (sorted-map)))
+        documented   (count (filter :doc (vals registry)))
+        inherited    (count (filter #(get-in % [:doc :from]) (vals registry)))]
     (str "  total entries:      " (count registry) "\n"
+         (format "  with javadoc:       %d (%.0f%%, %d inherited)\n"
+                 documented
+                 (* 100.0 (/ documented (max 1 (count registry))))
+                 inherited)
          (str/join "\n" (for [[s c] shape-counts]
                           (format "  %-22s %4d" s c))))))
 
