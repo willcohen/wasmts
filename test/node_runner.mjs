@@ -147,12 +147,17 @@ const builtins = {
   // Bundle HH: Coordinate[]-returning methods now produce a real JS array
   // of plain {x, y, z?, m?} objects (with a non-enumerable _jtsCoordArray
   // stash for round-trip back into JTS). This builtin derefs the handle
-  // and returns the xys pairs as a plain JSON array — used by the
-  // differential test fixture's wasmts-coord-array-xys helper.
+  // and returns [x, y, z] triples as a plain JSON array — used by the
+  // differential test fixture's wasmts-coord-array-xys / -xyzs helpers.
+  //
+  // z rides along so a 3D consumer (Distance3DOp.nearestPoints) can compare
+  // it; without it the return leg was dim-2 and silently flattened the
+  // answer. JSON has no NaN literal, so an absent or NaN z ships as null,
+  // which the JVM side reads back as Coordinate's NaN "no Z" sentinel.
   _coordArrayXys: ({ __handle }) => {
     const arr = handles.get(__handle);
     if (!Array.isArray(arr)) throw new Error('Expected coord array handle, got: ' + typeof arr);
-    return arr.map(c => [c.x, c.y]);
+    return arr.map(c => [c.x, c.y, Number.isNaN(c.z) ? null : (c.z ?? null)]);
   },
   _readWKT: (wkt) => mkHandle(globalThis.wasmts.io.WKTReader.read(wktReader, wkt)),
   _writeWKT: (h) => globalThis.wasmts.io.WKTWriter.write(wktWriter, deref(h)),

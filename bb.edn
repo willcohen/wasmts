@@ -25,13 +25,17 @@
    :task (shell "clojure" "-X:emit-tests")}
 
   gen:dts
-  {:doc "Emit dist/wasmts.d.ts from registry.edn"
+  {:doc "Emit types/wasmts.d.ts from registry.edn. js/build.mjs copies it to dist/."
    :depends [registry]
    :task (shell "clojure" "-X:emit-dts")}
 
   gen:all
   {:doc "Regenerate every artifact derived from registry.edn"
    :depends [gen:api gen:tests gen:dts]}
+
+  check:javadoc-links
+  {:doc "Do a check of each @see anchor in types/wasmts.d.ts against the live JTS javadoc. Needs network access, thus it is not part of gen:all or CI."
+   :task (shell "node" "scripts/check-javadoc-links.mjs")}
 
   test
   {:doc "Run JVM test suite (oracle + differential harness)"

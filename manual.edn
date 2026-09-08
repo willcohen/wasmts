@@ -1451,103 +1451,6 @@
   #{"total" "used" "free" "totalString" "usedString" "freeString"
     "allString" "usedTotalString"}
 
-  ;; (Tolerance / distance / ratio double params — Densifier, the
-  ;; simplifiers, MaximumInscribedCircle, ConcaveHullOfPolygons,
-  ;; DiscreteHausdorffDistance, etc. — used to live here. The generic
-  ;; engine now selects a domain-correct double generator by LVT param
-  ;; name (emit_tests.clj/double-gen-for: tolerance/length/radius ->
-  ;; gen-pos-coord, ratio/frac -> gen-unit-frac), so they generate valid
-  ;; input and stay in coverage. No quarantine needed.)
-
-  ;; (PolygonNodeTopology.isCrossing used to live here — RECOVERED 2026-06-01.
-  ;; It expects five coords forming a valid polygon node (two edges a0->node->a1
-  ;; and b0->node->b1 meeting at a shared node); independent random coords make
-  ;; JTS's Quadrant throw. Fixed with gen-polygon-node (the structured 5-coord
-  ;; tuple) supplied via :gen-tuple; port matches the oracle 0 mismatch / 400.
-  ;; See the :hints below.)
-  ;; (Octant.octant and Quadrant.quadrant used to live here — both RECOVERED
-  ;; 2026-06-01. They throw on a zero vector / identical points (p0 == p1), and
-  ;; gen-coord's 1e-10 magnitude clamp can collapse two independent draws to an
-  ;; equal coordinate pair. Fixed with gen-distinct-coordinate-pair supplied as
-  ;; the whole arg tuple via a :gen-tuple hint (c1 = c0 + non-zero offset); the
-  ;; port matches the oracle 0 mismatch / 400 each. See the :hints below.)
-
-  ;; Distance3DOp.distance / isWithinDistance RECOVERED 2026-06-01. Two issues,
-  ;; both fixed: (1) gen-wkt is 2D, so the geometry params are now pointed at
-  ;; gen-wkt-3d (3D points/lines) via :gen-overrides; (2) the harness shipped
-  ;; geometries through a dim-2 WKB writer, flattening the Z before the port
-  ;; saw it — jts->wasmts now ships Z-carrying geometries via a dim-3 writer
-  ;; (the port's WKBReader auto-detects the dimension). Port matches the JTS 3D
-  ;; oracle 0 fail / 400 for distance and isWithinDistance. nearestPoints stays
-  ;; quarantined: it returns a Coordinate[], and the port's result-return path
-  ;; (_writeWKB / _coordArrayXys) is dim-2, so the Z of the nearest points is
-  ;; dropped on the way back (a transport gap on the RETURN leg, not a port bug).
-  org.locationtech.jts.operation.distance3d.Distance3DOp #{"nearestPoints"}
-
-  ;; (Intersection.intersection/lineSegment and CGAlgorithmsDD.intersection
-  ;; on collinear/parallel coordinate quads used to live here: JTS returns
-  ;; null, the wasmts port NPE'd because createJSCoordinate dereferenced a
-  ;; null Coordinate. FIXED — API.createJSCoordinate is now null-safe
-  ;; (returns JS null), so a null result passes through and matches the
-  ;; oracle. Back in coverage.)
-
-  ;; CONSTRUCTION-METHOD TIE-BREAK / REPRESENTATION — NOT a port bug. A
-  ;; 2026-05-29 divergence investigation (N=1500/family, regular-vs-irregular
-  ;; polygon inputs, discrete-Hausdorff + scalar-invariant cross-checks)
-  ;; reclassified the construction families that failed the default
-  ;; .norm/.equalsExact compare. None is a port logic bug, and none is FP
-  ;; error in the OUTPUT value:
-  ;;   - VariableBuffer / OffsetCurve / Densifier emit a GEOMETRICALLY
-  ;;     IDENTICAL result (Hausdorff ~1e-14) that carries a near-coincident
-  ;;     vertex the JVM JTS collapses; .equalsExact is vertex-count-strict,
-  ;;     so it false-failed. (buffer(0) and a near-dup coordinate dedup do
-  ;;     NOT reconcile them — only a same-shape predicate does.) Now compared
-  ;;     via :compare :same-shape — back in coverage (validated 0 fail over
-  ;;     the divergent population at N=1200/family).
-  ;;   - MinimumClearance / SimpleMinimumClearance getLine, MinimumArea-
-  ;;     Rectangle, DouglasPeucker / VW simplify, LargestEmptyCircle
-  ;;     getRadiusLine return a NON-CANONICAL representative under the
-  ;;     symmetric gen-wkt regular n-gons (every candidate feature tied):
-  ;;     they agree on irregular inputs, and the scalar invariant the
-  ;;     algorithm actually determines (clearance distance / rectangle area /
-  ;;     circle radius) agrees to 1e-6. Now compared via :compare :length or
-  ;;     :area — back in coverage. (The getDistance variants already passed.)
-  ;; The per-method :compare assignments live in :hints below. CubicBezier-
-  ;; Curve.bezierCurve is now back in coverage (re-classified 2026-06-01);
-  ;; two entries stay quarantined.
-  ;;   - CubicBezierCurve.bezierCurve (RECOVERED 2026-06-01): the earlier
-  ;;     "FP-instability beyond 1e-6, extreme alpha crashes the port" reading
-  ;;     did not hold up on direct testing. The Web-Image port collapses the
-  ;;     three Java overloads into a single arity-3 JS function bezierCurve(
-  ;;     geom, alpha, skew); the 2-arg and (Geometry, Geometry) forms are
-  ;;     unreachable (a 2-arg call throws a CATCHABLE ClassCastException, not
-  ;;     a crash). dedup-by-path already keeps the 3-arg overload (highest
-  ;;     arity). Called with 3 args the port matches the JVM oracle to ~1e-15
-  ;;     discrete-Hausdorff for every alpha up to 632, and never crashes at
-  ;;     any alpha/skew tested (incl. 632/632). The only residual failures
-  ;;     were a rare symmetric-difference overlay flake at unbounded (+-1000)
-  ;;     alpha/skew. Bounding alpha to (0,1] and skew to [-1,1] via a
-  ;;     :gen-overrides hint gives 0 fail over 400 samples; recovered with
-  ;;     :compare :same-shape. See docs/plans/2026-05-29-divergence-followups.md.
-  ;; (TopologyPreservingSimplifier.simplify and LargestEmptyCircle.getCenter
-  ;; used to live here — both RECOVERED 2026-06-01, see the :hints below.
-  ;;   - TopologyPreservingSimplifier.simplify: at tolerance >> extent the
-  ;;     result collapses to a minimal topology-preserving triangle, and WHICH
-  ;;     triangle is a tie-break under gen-wkt's regular n-gons; the tied
-  ;;     triangles differ in both shape AND area, so neither :same-shape nor
-  ;;     :area reconciles them (10/400 fail under :same-shape on regular
-  ;;     input). Feeding an IRREGULAR (jittered-radius) polygon via
-  ;;     :gen-overrides breaks the symmetry: 0/400 divergent. Now :gen-overrides
-  ;;     {0 gen-irregular-wkt} + :compare :same-shape.
-  ;;   - LargestEmptyCircle.getCenter: the center lies on a symmetric locus
-  ;;     under regular obstacle/boundary polygons, so JTS and the port pick
-  ;;     genuinely DIFFERENT tied centers (demonstrated: concentric pentagons,
-  ;;     centers 117.5 apart) that no geometry compare reconciles. The only
-  ;;     agreeing invariant is the clearance = distance(center, obstacles) =
-  ;;     the LEC radius, identical at both tied centers. Now :compare
-  ;;     :clearance. (The radius is also covered by getRadiusLine's :length;
-  ;;     :clearance exercises the getCenter path directly.))
-
   ;; KNOWN DIVERGENCE — BufferResultValidator.isValidMsg returns a human-
   ;; readable String diagnostic; JTS and the wasmts port word the same
   ;; validity verdict differently, so a string-equality compare is the
@@ -1555,34 +1458,45 @@
   ;; isValid, or drop the message compare.
   org.locationtech.jts.operation.buffer.validate.BufferResultValidator #{"isValidMsg"}
 
-  ;; nearestPoints returns the closest point PAIR as a Coordinate[2];
-  ;; coord-array-equal-form compares it order-strict. 2026-06-01 investigation:
-  ;; the alleged seed-dependent pair-order divergence does NOT reproduce on the
-  ;; current port — 0/400 over random gen-wkt and 0/3 over adversarial parallel-
-  ;; segment / stacked-polygon tie provocations (JTS and the port pick the same
-  ;; pair in the same order every time). Left quarantined because: (a) it can't
-  ;; be reproduced-and-fixed, so un-quarantining with the strict compare risks a
-  ;; rare unobserved flake, and (b) the Coordinate[] return is emitted by a
-  ;; dedicated spec template (not generic-spec), so an order-insensitive
-  ;; :compare override would need plumbing there, not the generic compare hook.
-  ;; Recover by adding that override OR after a larger sample confirms 0 divergence.
-  org.locationtech.jts.operation.distance.IndexedFacetDistance #{"nearestPoints"}
-  org.locationtech.jts.operation.distance.DistanceOp #{"nearestPoints"}}
+  }
 
  :hints
  {
   ;; Per-method differential-compare overrides (:compare). The construction
   ;; families below return geometry that is correct but not vertex-for-vertex
-  ;; identical to the JVM oracle; see the :test-skip note for the 2026-05-29
-  ;; investigation. :same-shape compares symmetric-difference / Hausdorff
+  ;; identical to the JVM oracle. :same-shape compares symmetric-difference /
+  ;; Hausdorff
   ;; (port emits the same shape with a near-duplicate vertex). :length and
   ;; :area compare the scalar the algorithm determines (clearance distance /
   ;; circle radius, or rectangle / simplified area) rather than the tied
   ;; non-canonical representative geometry.
+  ;; Geometry.buffer emits a ring identical to the oracle's to ~1e-15, but
+  ;; .norm picks the ring start by coordinate order, and a 1-ULP difference in
+  ;; x decides whether the x comparison ties (y breaks it) or not. The rings
+  ;; then start one vertex apart and .equalsExact fails at every vertex.
+  ;; Confirmed by rotating the port ring back: max error 8.9e-16.
+  {:class "org.locationtech.jts.geom.Geometry"
+   :method "buffer"
+   :params ["double"]}
+  {:compare :same-shape}
+  ;; Same ring-rotation artifact, measured: 37 vertices both sides, ring
+  ;; rotated by 35, max vertex error 2.8e-14, Hausdorff 2.9e-14.
+  {:class "org.locationtech.jts.precision.EnhancedPrecisionOp"
+   :method "buffer"
+   :params ["org.locationtech.jts.geom.Geometry" "double"]}
+  {:compare :same-shape}
+  ;; :gen-overrides keeps the JVM oracle out of two degenerate regimes it
+  ;; throws in. gen-line-wkt draws x and y independently and gen-coord clamped
+  ;; sub-1e-10 magnitudes onto one value, so lines routinely carried a
+  ;; zero-length segment, which no cap geometry can ring. Separately, a buffer
+  ;; distance 1.5x to 3.5x the segment length degenerates the per-segment cap.
+  ;; Segments >= 100 paired with distances <= 50 hold the ratio at 0.5.
   {:class "org.locationtech.jts.operation.buffer.VariableBuffer"
    :method "buffer"
    :params ["org.locationtech.jts.geom.Geometry" "double" "double" "double"]}
-  {:compare :same-shape}
+  {:gen-overrides {0 gen-spaced-line-wkt 1 gen-buffer-dist
+                   2 gen-buffer-dist 3 gen-buffer-dist}
+   :compare :same-shape}
   {:class "org.locationtech.jts.operation.buffer.OffsetCurve"
    :method "getCurve"
    :params ["org.locationtech.jts.geom.Geometry" "double"]}
@@ -1607,51 +1521,115 @@
    :method "getMinimumRectangle"
    :params ["org.locationtech.jts.geom.Geometry"]}
   {:compare :area}
+  ;; DouglasPeucker and VW also need the :jvm-stable guard on top of :area,
+  ;; for a different tie from TopologyPreservingSimplifier's. At a tolerance
+  ;; that reaches the collapse threshold exactly, JTS applies buffer(0) to the
+  ;; degenerate ring and returns POLYGON EMPTY while the port returns the
+  ;; input unchanged, so the areas are 0 against the full area rather than
+  ;; close. Reproduces on an equilateral triangle at tolerance exactly 1.5x
+  ;; the circumradius, where the vertex-to-opposite-side distance equals the
+  ;; tolerance to the bit:
+  ;;   POLYGON ((-1.0 0.0, -2.5 0.8660254037844388,
+  ;;     -2.5000000000000004 -0.8660254037844384, -1.0 0.0))  tol 1.5
+  ;; The JVM flips between EMPTY and the whole triangle under a 1-ULP nudge
+  ;; there, so the guard catches it. Only reachable since the generators were
+  ;; bounded: the bounded draw emits round values like 1.0 and 1.5 often enough
+  ;; to hit the boundary. VW has not been seen to fail there but shares the
+  ;; collapse path, and its guard costs the same, so it carries the hint too.
+  ;;
+  ;; The guard tests AREA stability, not geometry stability, because :area is
+  ;; what it guards (rpc/geom-area-same?, picked by emit-tests-compare's
+  ;; jvm-stable-guard). Testing geometry would call a case unstable whenever a
+  ;; nudge reshuffles vertices at constant area, which skips most of them.
   {:class "org.locationtech.jts.simplify.DouglasPeuckerSimplifier"
    :method "simplify"
    :params ["org.locationtech.jts.geom.Geometry" "double"]}
-  {:compare :area}
+  {:compare :area :jvm-stable true}
   {:class "org.locationtech.jts.simplify.VWSimplifier"
    :method "simplify"
    :params ["org.locationtech.jts.geom.Geometry" "double"]}
-  {:compare :area}
+  {:compare :area :jvm-stable true}
 
   ;; CubicBezierCurve.bezierCurve (3-arg: geom, alpha, skew). dedup-by-path
-  ;; keeps this highest-arity overload; the port only exposes the arity-3 JS
-  ;; function. :gen-overrides bounds alpha to (0,1] (gen-unit-frac) and skew to
-  ;; [-1,1] (gen-unit-signed) so the cubic stays in its in-domain band; the
-  ;; default gen-coord (+-1000) drives a rare symmetric-difference overlay
-  ;; flake. Compared with :same-shape (port matches the oracle to ~1e-15
-  ;; discrete-Hausdorff). See the :test-skip note for the 2026-06-01 recovery.
+  ;; keeps this highest-arity overload; the port collapses all three Java
+  ;; overloads into one arity-3 JS function, so the 2-arg and (Geometry,
+  ;; Geometry) forms are unreachable. :gen-overrides bounds alpha to (0,1]
+  ;; (gen-unit-frac) and skew to [-1,1] (gen-unit-signed) so the cubic stays in
+  ;; its in-domain band; the default gen-coord (+-1000) drives a rare
+  ;; symmetric-difference overlay flake.
   {:class "org.locationtech.jts.shape.CubicBezierCurve"
    :method "bezierCurve"
    :params ["org.locationtech.jts.geom.Geometry" "double" "double"]}
   {:gen-overrides {1 gen-unit-frac 2 gen-unit-signed} :compare :same-shape}
 
-  ;; TopologyPreservingSimplifier.simplify: the minimal-triangle collapse at
-  ;; tolerance >> extent ties on regular n-gons (tied triangles differ in both
-  ;; shape and area). Feed an IRREGULAR polygon to break the symmetry, then
-  ;; :same-shape. See the :test-skip note for the 2026-06-01 recovery.
+
+  ;; TopologyPreservingSimplifier.simplify: two valid output branches, selected
+  ;; on the last bit. This is NOT a port defect. Nudging one ordinate of the
+  ;; polygon below by N ULPs, JVM only, no wasm anywhere, at a fixed tol=1.0:
+  ;;   N:     0    1    2    3    5   10   50  200  1000
+  ;;   area: 5.45 2.89 5.45 2.89 5.45 5.45 5.45 2.89  5.45
+  ;; 2.892023 is exactly what the port returns, and the tolerance sweep is flat
+  ;; over 0.98..1.05, so the sensitivity is to the input and not the tolerance.
+  ;; The wasm build and HotSpot differ by an ULP somewhere (FP evaluation order,
+  ;; libm) and land on different branches. DouglasPeucker and VW are pure
+  ;; recursive geometry with no such branch, which is why they agree exactly.
+  ;;
+  ;; No bound helps, unlike VariableBuffer: the trigger is an ULP, not a
+  ;; regime, and bucketing by tolerance/extent found no divergent bucket while
+  ;; the polygon below reproduces every time. So :jvm-stable instead, which
+  ;; keeps the strict compare wherever the JVM answer is well defined and skips
+  ;; only where the JVM itself flips. On this polygon it reports unstable at
+  ;; exactly the tolerances that diverge (0.7, 1.0, 1.5) and stable at 0.5.
+  ;;   POLYGON ((2.0 1.0, 1.6234898018587336 1.78183148246803,
+  ;;     0.7774790660436857 1.9749279121818235,
+  ;;     -1.0271799527804428 1.976238413014506,
+  ;;     -1.0271799527804433 0.023761586985494465,
+  ;;     0.7774790660436854 0.02507208781817649,
+  ;;     1.9352347027881 -0.17274722370204487, 2.0 1.0))
+  ;;
+  ;; This is the only method the wide end of rpc/nudge-probes buys anything
+  ;; for. Its minimal-triangle collapse at a tolerance above the input's extent
+  ;; is a WIDE-basin tie rather than a last-bit one: JTS holds its pick against
+  ;; any small nudge, so a narrow probe clears the case while the port answers
+  ;; a different valid triangle (areas 906.8 against 1427.5, at tol 328.6 on an
+  ;; input of extent 125). It flips at 1024 ULPs, ~7e-12 on a magnitude-60
+  ;; ordinate. The cost is the skip rate the other :jvm-stable users pay.
   {:class "org.locationtech.jts.simplify.TopologyPreservingSimplifier"
    :method "simplify"
    :params ["org.locationtech.jts.geom.Geometry" "double"]}
-  {:gen-overrides {0 gen-irregular-wkt} :compare :same-shape}
+  {:gen-overrides {0 gen-irregular-wkt} :jvm-stable true}
 
   ;; LargestEmptyCircle.getCenter (3-arg: obstacles, boundary, tolerance).
   ;; dedup-by-path keeps this highest-arity overload. The center ties on a
-  ;; symmetric locus (JTS and the port pick genuinely different equivalent
-  ;; centers), so :clearance compares distance(center, obstacles) = the LEC
-  ;; radius, which is identical at both tied centers. :clearance reads the
-  ;; obstacles geom from the first geom param (a1-g). See the :test-skip note.
+  ;; symmetric locus (concentric pentagons put the two tied centers 117.5
+  ;; apart, which no geometry compare reconciles), so :clearance compares
+  ;; distance(center, obstacles) = the LEC radius, identical at both tied
+  ;; centers. :clearance reads the obstacles geom from the first geom param.
   {:class "org.locationtech.jts.algorithm.construct.LargestEmptyCircle"
    :method "getCenter"
    :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry" "double"]}
   {:compare :clearance}
 
-  ;; Distance3DOp.distance / isWithinDistance: 3D distance ops. Point both
-  ;; geometry params at gen-wkt-3d (3D points/lines); jts->wasmts ships them
-  ;; via a dim-3 WKB writer so the port sees the Z. Both return a scalar, so
-  ;; the default numeric/boolean compare applies. See the :test-skip note.
+  ;; Distance3DOp: 3D distance ops. Point both geometry params at gen-wkt-3d
+  ;; (3D points/lines); jts->wasmts ships them via a dim-3 WKB writer so the
+  ;; port sees the Z. distance / isWithinDistance return a scalar and
+  ;; nearestPoints a Coordinate[2]; the default compare for each applies, and
+  ;; the Coordinate[] one now includes the Z.
+  ;;
+  ;; nearestPoints stays STRICT rather than :pair-distance, unlike its 2D
+  ;; siblings. computeMinDistanceLinePoint reaches the segment point through
+  ;; the 2D LineSegment.closestPoint, and JTS 1.20's private
+  ;; LineSegment.project(Coordinate, double) copies the QUERY point and
+  ;; overwrites x and y only:
+  ;;     Coordinate coord = p.copy();
+  ;;     coord.x = p0.x + f * (p1.x - p0.x);
+  ;;     coord.y = p0.y + f * (p1.y - p0.y);
+  ;; So the returned "point on the segment" carries the OTHER geometry's Z, and
+  ;; the pair neither lies on its geometries in 3D nor spans the reported 3D
+  ;; distance — :pair-distance would reject what both sides correctly return.
+  ;; The Z being copied rather than computed also leaves no arithmetic for the
+  ;; two builds to round differently, so the strict compare is free here.
+  ;; Reproduce with LINESTRING Z (-2 -1 1, -2 1 -1) against POINT Z (1 0.5 0).
   {:class "org.locationtech.jts.operation.distance3d.Distance3DOp"
    :method "distance"
    :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry"]}
@@ -1660,6 +1638,31 @@
    :method "isWithinDistance"
    :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry" "double"]}
   {:gen-overrides {0 gen-wkt-3d 1 gen-wkt-3d}}
+  {:class "org.locationtech.jts.operation.distance3d.Distance3DOp"
+   :method "nearestPoints"
+   :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry"]}
+  {:gen-overrides {0 gen-wkt-3d 1 gen-wkt-3d}}
+
+  ;; The 2D closest-point-pair methods. Each returns a Coordinate[2], and the
+  ;; pair is not unique wherever the nearest approach is not: on parallel edges
+  ;; both sides return a valid pair slid along the parallel by the same delta,
+  ;; which the position-strict default compare rejects. :pair-distance checks
+  ;; the separation and that each point lies on its own geometry instead, which
+  ;; stops pinning the answer in two regimes — see rpc/nearest-pair-agrees?.
+  ;; closestPoints is JTS's deprecated alias for nearestPoints and ties the
+  ;; same way.
+  {:class "org.locationtech.jts.operation.distance.DistanceOp"
+   :method "nearestPoints"
+   :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry"]}
+  {:compare :pair-distance}
+  {:class "org.locationtech.jts.operation.distance.DistanceOp"
+   :method "closestPoints"
+   :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry"]}
+  {:compare :pair-distance}
+  {:class "org.locationtech.jts.operation.distance.IndexedFacetDistance"
+   :method "nearestPoints"
+   :params ["org.locationtech.jts.geom.Geometry" "org.locationtech.jts.geom.Geometry"]}
+  {:compare :pair-distance}
 
   ;; Octant.octant / Quadrant.quadrant (Coordinate, Coordinate) throw on
   ;; identical points; :gen-tuple supplies the whole [c0 c1] arg vector from
@@ -2487,6 +2490,22 @@
   ;; {:generic-hint {:returns {:element "java.lang.Object"}}}
 
   }
+
+
+ :javadoc-ambiguous
+ ;; Entries where JTS documents the name and arity but javadoc-index cannot say
+ ;; which overload the entry is, so it emits with no docs at all. build-registry
+ ;; fails unless this set matches exactly, so a codegen defect cannot hide here
+ ;; as a gap in JTS. All eight are same-arity overload pairs whose parameter
+ ;; types collapse to the same simple names once generics are erased.
+ #{["org.locationtech.jts.algorithm.HCoordinate" "<init>" ["double" "double"]]
+   ["org.locationtech.jts.algorithm.HCoordinate" "<init>" ["org.locationtech.jts.algorithm.HCoordinate" "org.locationtech.jts.algorithm.HCoordinate"]]
+   ["org.locationtech.jts.geom.util.GeometryExtracter" "extract" ["org.locationtech.jts.geom.Geometry" "java.lang.String"]]
+   ["org.locationtech.jts.geom.util.GeometryMapper" "map" ["java.util.Collection" "org.locationtech.jts.geom.util.GeometryMapper$MapOp"]]
+   ["org.locationtech.jts.geomgraph.Node" "mergeLabel" ["org.locationtech.jts.geomgraph.Node"]]
+   ["org.locationtech.jts.geomgraph.NodeMap" "addNode" ["org.locationtech.jts.geomgraph.Node"]]
+   ["org.locationtech.jts.index.bintree.Bintree" "query" ["double"]]
+   ["org.locationtech.jts.triangulate.quadedge.EdgeConnectedTriangleTraversal" "init" ["org.locationtech.jts.triangulate.quadedge.QuadEdgeTriangle"]]}
 
 
  :static-only-methods

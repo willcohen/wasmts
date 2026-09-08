@@ -8,15 +8,16 @@
      - OO: `interface Geometry { ... }` — same entries with the first
        argument (the receiver) curried away.
 
-   js/build.mjs is expected to copy types/wasmts.d.ts to dist/ alongside
-   wasmts.js so npm consumers pick up the types. (Not wired yet; the
-   .d.ts is a generated source artifact under version control until the
-   build pipeline links it.)"
+   js/build.mjs copies types/wasmts.d.ts to dist/ with wasmts.js.
+   package.json publishes that path as `types`. The generated file is
+   gitignored. `bb gen:dts` makes it, and build.mjs writes a warning if the
+   file is absent."
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [codegen-common :refer [geometry-subtypes js-path in-scope? dedup-by-path]]))
+   [codegen-common :refer [geometry-subtypes js-path in-scope? dedup-by-path
+                           tsdoc-block]]))
 
 (defn- ts-type
   "Map a normalized Java type string to a TypeScript type."
@@ -68,12 +69,47 @@
     name
     (format "a%d" (inc idx))))
 
-(defn- param-name-at
-  "Pick the identifier for arg `idx`. `names` is the `:param-names` vector
-   (may be nil for partial coverage); `offset` shifts into it when the
-   receiver was prepended at idx 0 for the functional surface."
-  [names idx offset]
-  (ts-ident (when names (get names (- idx offset))) idx))
+(defn- arg-idents
+  "Identifiers the emitted signature gives the Java parameters, in
+   declaration order. `offset` is 1 when the functional form prepended a
+   receiver, which shifts the `aN` fallback numbering by one; 0 otherwise.
+
+   The doc emitter renames the javadoc's own @param entries to these, so
+   the @param list and the signature always agree even where the fallback
+   supplied the name."
+  [names n offset]
+  (mapv (fn [j] (ts-ident (when names (get names j)) (+ j offset)))
+        (range n)))
+
+(defn- functional-idents
+  "Identifiers the functional signature gives the Java parameters. Static
+   entries and constructors take no receiver, so their numbering starts at
+   a1; instance entries are shifted by the receiver at position 0."
+  [{:keys [method params]} {:keys [static? param-names]}]
+  (let [receiver? (not (or static? (= method "<init>")))]
+    (arg-idents param-names (count params) (if receiver? 1 0))))
+
+(defn- oo-idents
+  "Identifiers the OO signature gives the parameters. The receiver is
+   curried away, so numbering starts at a1 for the first argument."
+  [{:keys [params]} {:keys [param-names]}]
+  (arg-idents param-names (count params) 0))
+
+(defn- renames
+  "Pair each Java parameter name with the identifier the signature gives it,
+   in declaration order, for `tsdoc-block` to rename @param entries by name.
+   A position with no LVT name pairs nil with its `aN` fallback, so it can
+   still be reached positionally but never matched by name."
+  [param-names idents]
+  (mapv (fn [j id] [(when param-names (get param-names j)) id])
+        (range (count idents))
+        idents))
+
+(defn- functional-renames [k v]
+  (renames (:param-names v) (functional-idents k v)))
+
+(defn- oo-renames [k v]
+  (renames (:param-names v) (oo-idents k v)))
 
 (def ^:private field-shapes
   "Shape keywords that install a plain primitive constant on the JS
@@ -120,17 +156,12 @@
   (let [ret  (ts-type (:type returns))
         ctor? (= method "<init>")
         receiver? (not (or static? ctor?))
+        idents (functional-idents {:class class :method method :params params}
+                                  {:static? static? :param-names param-names})
+        all-idents (if receiver? (cons (receiver-ident class) idents) idents)
         full-params (if receiver? (cons class params) params)
-        offset (if receiver? 1 0)
-        recv-name (when receiver? (receiver-ident class))
-        param-strs (->> full-params
-                        (map-indexed
-                         (fn [i t]
-                           (format "%s: %s"
-                                   (if (and receiver? (zero? i))
-                                     recv-name
-                                     (param-name-at param-names i offset))
-                                   (ts-type t)))))]
+        param-strs (map (fn [id t] (format "%s: %s" id (ts-type t)))
+                        all-idents full-params)]
     (format "%s(%s): %s;"
             name
             (str/join ", " param-strs)
@@ -141,11 +172,9 @@
    so numbering restarts at a1 for the first non-receiver argument."
   [{:keys [params] :as k} {:keys [returns param-names]}]
   (let [ret (ts-type (:type returns))
-        param-strs (->> params
-                        (map-indexed (fn [i t]
-                                       (format "%s: %s"
-                                               (param-name-at param-names i 0)
-                                               (ts-type t)))))]
+        param-strs (map (fn [id t] (format "%s: %s" id (ts-type t)))
+                        (oo-idents k {:param-names param-names})
+                        params)]
     (format "%s(%s): %s;"
             (method-name k)
             (str/join ", " param-strs)
@@ -164,9 +193,15 @@
    listed on that interface. Add entries here as new receiver shapes
    land.
 
-   Coordinate is included as a brand-only stub for now; its receiver
-   shapes haven't landed but emit_api may reference it as a return
-   type already."
+   `ts-type` must have an entry here for every name it can produce, or
+   the .d.ts references a type it never declares and fails to compile.
+
+   `:brand-only? true` emits the brand and no members. Use it for a class
+   whose JS wrapper is a bare handle object: emit_api gives a method
+   surface only to `js-wrapper-classes` entries marked `:wire?`, so
+   declaring members for the rest would promise methods that do not exist
+   at runtime. Those classes are still reachable through the functional
+   surface, which passes the wrapper as the first argument."
   [{:class "org.locationtech.jts.geom.Geometry"  :tsname "Geometry"
     :brand "Geometry"
     :match (fn [c] (geometry-subtypes c))}
@@ -220,14 +255,33 @@
     :match (fn [c] (= c "org.locationtech.jts.operation.distance.DistanceOp"))}
    {:class "org.locationtech.jts.geom.IntersectionMatrix" :tsname "IntersectionMatrix"
     :brand "IntersectionMatrix"
-    :match (fn [c] (= c "org.locationtech.jts.geom.IntersectionMatrix"))}])
+    :match (fn [c] (= c "org.locationtech.jts.geom.IntersectionMatrix"))}
+   ;; :wire? :attach? in emit_api, so the wrapper carries these methods.
+   ;; Matches the CoordinateSequence interface only. The impl classes
+   ;; (CoordinateArraySequence, PackedCoordinateSequence) keep their own JS
+   ;; paths, so folding them in here would duplicate every member name.
+   {:class "org.locationtech.jts.geom.CoordinateSequence" :tsname "CoordinateSequence"
+    :brand "CoordinateSequence"
+    :match (fn [c] (= c "org.locationtech.jts.geom.CoordinateSequence"))}
+   ;; Bare handle wrappers: reach their methods through wasmts.densify.*,
+   ;; wasmts.geom.util.* and wasmts.precision.*.
+   {:class "org.locationtech.jts.densify.Densifier" :tsname "Densifier"
+    :brand "Densifier" :brand-only? true
+    :match (fn [c] (= c "org.locationtech.jts.densify.Densifier"))}
+   {:class "org.locationtech.jts.geom.util.GeometryFixer" :tsname "GeometryFixer"
+    :brand "GeometryFixer" :brand-only? true
+    :match (fn [c] (= c "org.locationtech.jts.geom.util.GeometryFixer"))}
+   {:class "org.locationtech.jts.precision.GeometryPrecisionReducer" :tsname "GeometryPrecisionReducer"
+    :brand "GeometryPrecisionReducer" :brand-only? true
+    :match (fn [c] (= c "org.locationtech.jts.precision.GeometryPrecisionReducer"))}])
 
-(defn- entries-for-interface [{:keys [match]} entries]
+(defn- entries-for-interface [{:keys [match brand-only?]} entries]
   ;; Ctors are factories on the class, not instance behavior — exclude them
   ;; from the OO receiver interface.
-  (filter (fn [[k _]] (and (not= "<init>" (:method k))
-                           (match (:class k))))
-          entries))
+  (when-not brand-only?
+    (filter (fn [[k _]] (and (not= "<init>" (:method k))
+                             (match (:class k))))
+            entries)))
 
 (defn- read-extra-dts []
   ;; manual.edn :extra-dts is a map JS-path -> raw TS signature. Used for
@@ -277,14 +331,18 @@
       (if (leaf? node)
         (let [[a b] node]
           (cond
+            ;; manual.edn :extra-dts entries are raw signature strings with
+            ;; no registry entry behind them, so there is no javadoc to find.
             (= :raw a)
             (.append sb (format "%s%s\n" pad b))
 
             (field-shapes (:shape b))
-            (.append sb (format "%s%s\n" pad (field-sig seg b)))
+            (do (some->> (tsdoc-block indent a b) (.append sb))
+                (.append sb (format "%s%s\n" pad (field-sig seg b))))
 
             :else
-            (.append sb (format "%s%s\n" pad (functional-sig seg a b)))))
+            (do (some->> (tsdoc-block indent a b (functional-renames a b)) (.append sb))
+                (.append sb (format "%s%s\n" pad (functional-sig seg a b))))))
         (do
           (.append sb (format "%s%s: {\n" pad seg))
           (.append sb (emit-tree node (+ indent 2)))
@@ -297,10 +355,11 @@
     (.append sb "  /** Brand: prevents structural assignment from plain objects. */\n")
     (.append sb (format "  readonly __jtsBrand?: '%s';\n\n" brand))
     (doseq [[k v] (sort-by (fn [[k _]] (method-name k)) entries)]
-      (.append sb (format "  %s\n"
-                          (if (field-shapes (:shape v))
-                            (field-sig (method-name k) v)
-                            (oo-sig k v)))))
+      (if (field-shapes (:shape v))
+        (do (some->> (tsdoc-block 2 k v) (.append sb))
+            (.append sb (format "  %s\n" (field-sig (method-name k) v))))
+        (do (some->> (tsdoc-block 2 k v (oo-renames k v)) (.append sb))
+            (.append sb (format "  %s\n" (oo-sig k v))))))
     (.append sb "}\n\n")
     (.toString sb)))
 
