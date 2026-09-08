@@ -14,20 +14,9 @@
    exact type matching isn't needed. Ambiguous overloads (same name,
    same arity) are detected and skipped — the LVT fallback (a1/a2)
    stays for those rare cases."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [jts-sources :as src])
   (:import [java.util.jar JarFile JarEntry]))
-
-;; Source-jar lookup path:
-;;   ~/.m2/repository/org/locationtech/jts/jts-core/<ver>/jts-core-<ver>-sources.jar
-(defn- find-sources-jar
-  "Locate the sources jar for JTS 1.20.0 under the local Maven cache.
-   Returns nil if not present — callers should fall back gracefully."
-  []
-  (let [home (System/getProperty "user.home")
-        path (str home "/.m2/repository/org/locationtech/jts/jts-core/1.20.0/jts-core-1.20.0-sources.jar")]
-    (when (.exists (io/file path))
-      path)))
 
 (defn- read-jar-entry
   "Slurp the bytes of an entry within a jar as a UTF-8 string."
@@ -150,20 +139,19 @@
    declarations, return {class-fqn {[method-name arity] [param-names]}}.
    Non-interface files are skipped."
   []
-  (when-let [jar-path (find-sources-jar)]
-    (with-open [jar (JarFile. jar-path)]
-      (let [entries (->> (enumeration-seq (.entries jar))
-                         (filter #(.endsWith (.getName ^JarEntry %) ".java"))
-                         (map #(.getName ^JarEntry %)))]
-        (into {}
-              (keep (fn [entry-name]
-                      (let [content (read-jar-entry jar entry-name)]
-                        (when (has-abstract-methods? content)
-                          (let [class-fqn (entry->class-fqn entry-name)
-                                methods   (parse-interface-methods content)]
-                            (when (seq methods)
-                              [class-fqn methods]))))))
-              entries)))))
+  (with-open [jar (JarFile. ^String (src/jar-path))]
+    (let [entries (->> (enumeration-seq (.entries jar))
+                       (filter #(.endsWith (.getName ^JarEntry %) ".java"))
+                       (map #(.getName ^JarEntry %)))]
+      (into {}
+            (keep (fn [entry-name]
+                    (let [content (read-jar-entry jar entry-name)]
+                      (when (has-abstract-methods? content)
+                        (let [class-fqn (entry->class-fqn entry-name)
+                              methods   (parse-interface-methods content)]
+                          (when (seq methods)
+                            [class-fqn methods]))))))
+            entries))))
 
 (defn lookup-param-names
   "Returns [param-name ...] for [class-fqn method-name arity], or nil

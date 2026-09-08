@@ -20,6 +20,7 @@
     "build:js": "node js/build.mjs",
     "build": "npm run build:wasm",
     "test": "node --experimental-wasm-exnref test/test-node.mjs",
+    "test:types": "bb gen:dts && node test/types-doc.mjs",
     "serve": "python3 -m http.server 8000",
     "clean": "mvn clean && rm -rf dist js/src"
   },
@@ -37,6 +38,7 @@
     "CHANGELOG.md"
   ],
   "devDependencies": {
-    "esbuild": "^0.25.11"
+    "esbuild": "^0.25.11",
+    "typescript": "^5.9.3"
   }
 }

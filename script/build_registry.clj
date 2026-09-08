@@ -14,6 +14,7 @@
    [clojure.java.io :as io]
    [clojure.pprint :as pprint]
    [clojure.string :as str]
+   [javadoc-index :as jdoc]
    [param-names :as pn]
    [source-param-names :as spn])
   (:import
@@ -268,7 +269,6 @@
          "org.locationtech.jts.geom.GeometryCollection"}
        t)))
 
-(def ^:private envelope-class        "org.locationtech.jts.geom.Envelope")
 (def ^:private precision-model-class "org.locationtech.jts.geom.PrecisionModel")
 (def ^:private coordinate-class      "org.locationtech.jts.geom.Coordinate")
 (def ^:private lineseg-class         "org.locationtech.jts.geom.LineSegment")
@@ -1448,9 +1448,8 @@
       (cond
         (= class-entry :keep) false
         (= class-entry :all)  true
-        (set? class-entry)    (boolean
-                                (or (contains? class-entry method)
-                                    (contains? class-entry [method params])))
+        (set? class-entry)    (or (contains? class-entry method)
+                                  (contains? class-entry [method params]))
         :else false)
       ;; No class-keyed entry: fall back to package-prefix wildcard match.
       (boolean
@@ -1655,12 +1654,26 @@
     ;; default (Object) aN cast.
     :param-override
     ;; per-method differential-compare strategy override (emit_tests). One
-    ;; of :same-shape / :length / :area. Replaces the default return-type
-    ;; compare for construction methods whose port output is geometrically
-    ;; correct but not vertex-for-vertex identical to the JVM oracle (a
-    ;; near-duplicate vertex, or a tie-broken non-canonical representative
-    ;; on a symmetric input). See manual.edn :hints.
-    :compare})
+    ;; of :same-shape / :length / :area / :clearance / :pair-distance.
+    ;; Replaces the default return-type compare for construction methods
+    ;; whose port output is geometrically correct but not vertex-for-vertex
+    ;; identical to the JVM oracle (a near-duplicate vertex, or a tie-broken
+    ;; non-canonical representative on a symmetric input). See manual.edn
+    ;; :hints.
+    :compare
+    ;; per-method well-defined-reference guard (emit_tests). Boolean, and
+    ;; composes with :compare rather than replacing it: the comparison runs
+    ;; only where the JVM's own answer holds under a small perturbation of
+    ;; every geometry the call binds. For methods that select between two
+    ;; valid outputs on the last bit of an intermediate, where the port can
+    ;; differ without either side being wrong. See manual.edn :hints.
+    :jvm-stable
+    ;; javadoc for this member, from the sources jar. Shape:
+    ;; {:desc "..." :params [["name" "text"] ...] :returns "..."
+    ;;  :throws [["Type" "text"] ...] :from "<class-fqn>"}. Markup stays as
+    ;; javadoc wrote it, for each emitter to render. :from appears only on
+    ;; an inherited doc. Absent where JTS documents nothing.
+    :doc})
 
 (defn validate
   "Throw on structurally broken registry entries. Returns the registry
@@ -1814,6 +1827,43 @@
       gp-changed? (assoc :generic-params gp-merged)
       ret-merged  (assoc-in [:returns :generic-type] ret-merged))))
 
+(defn attach-docs
+  "Add `:doc` to every entry the JTS javadoc covers. Entries JTS leaves
+   undocumented keep no `:doc` key.
+
+   A separate pass from `reflect-one` so the doc index is built once for
+   the whole registry instead of once per class.
+
+   Throws when an entry has javadoc that no single overload matched and is
+   not listed in (manual.edn :javadoc-ambiguous). Such an entry emits with no
+   docs at all, so a codegen defect is indistinguishable from a gap in JTS.
+   This used to be a stderr warning, which nothing compared against anything,
+   so a regression that doubled the count read the same as the status quo."
+  [registry known-ambiguous]
+  (let [index (jdoc/build-index)
+        out   (reduce-kv
+               (fn [acc {:keys [class method params] :as k} v]
+                 (assoc acc k (if-let [d (jdoc/lookup index class method params)]
+                                ;; :types is index-internal, and would bloat
+                                ;; registry.edn.
+                                (assoc v :doc (dissoc d :types))
+                                v)))
+               {}
+               registry)
+        amb (->> (keys registry)
+                 (filter (fn [{:keys [class method params]}]
+                           (jdoc/undisambiguated index class method params)))
+                 (map (fn [{:keys [class method params]}] [class method params]))
+                 (sort))]
+    (when (not= (set amb) (set known-ambiguous))
+      (throw (ex-info (str "(manual.edn :javadoc-ambiguous) does not match the entries whose "
+                           "javadoc no single overload matched. Make it exactly:\n"
+                           (str/join "\n" (map #(str "    " (pr-str %)) amb))
+                           "\nA new entry is either a javadoc-index overload-matching defect or a "
+                           "gap in JTS; an entry that dropped out now resolves and its line goes.")
+                      {:actual amb :listed known-ambiguous})))
+    out))
+
 (defn- canonicalise
   "Produce a sort-stable form so registry.edn diffs cleanly across runs."
   [registry]
@@ -1830,11 +1880,13 @@
 ;; Entry points
 
 (defn build []
-  (-> (read-class-list)
-      reflect-classes
-      (classify (read-overrides))
-      validate
-      canonicalise))
+  (let [overrides (read-overrides)]
+    (-> (read-class-list)
+        reflect-classes
+        (classify overrides)
+        (attach-docs (:javadoc-ambiguous overrides))
+        validate
+        canonicalise)))
 
 (defn- shape-label
   "Stable text label for a shape. structured map shapes use
@@ -1848,8 +1900,14 @@
     :else        (str s)))
 
 (defn- summary [registry]
-  (let [shape-counts (->> registry vals (map :shape) (map shape-label) frequencies (into (sorted-map)))]
+  (let [shape-counts (->> registry vals (map :shape) (map shape-label) frequencies (into (sorted-map)))
+        documented   (count (filter :doc (vals registry)))
+        inherited    (count (filter #(get-in % [:doc :from]) (vals registry)))]
     (str "  total entries:      " (count registry) "\n"
+         (format "  with javadoc:       %d (%.0f%%, %d inherited)\n"
+                 documented
+                 (* 100.0 (/ documented (max 1 (count registry))))
+                 inherited)
          (str/join "\n" (for [[s c] shape-counts]
                           (format "  %-22s %4d" s c))))))
 

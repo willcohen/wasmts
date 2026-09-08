@@ -1,17 +1,15 @@
 (ns wasmts.differential.fixtures
-  "Hand-written companion to the generated test file. Provides:
+  "Hand-written companion to the generated test file: the test.check
+   generators the emitted defspecs draw their inputs from, and
+   with-runner-once, a clojure.test :once fixture that spawns the Node runner
+   before any defspec and tears it down after the last.
 
-     gen-wkt           — a test.check generator producing WKT strings
-                         for closed simple polygons. Inputs are
-                         deliberately tame: small finite coordinates,
-                         no NaN/Infinity, never empty. Build out into
-                         richer corpora (lines, multis, degenerate
-                         cases) as edge-case coverage grows.
-
-     with-runner-once  — a clojure.test :once fixture that spawns the
-                         Node runner before any defspec, tears it down
-                         after the last."
+   Inputs are deliberately tame throughout — small finite coordinates, no
+   NaN/Infinity, never empty. Anything narrower than a type's default
+   generator is pointed at a param by a manual.edn :gen-overrides or
+   :gen-tuple hint."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test.check.generators :as gen]
             [wasmts.differential.core :as rpc])
   (:import [org.locationtech.jts.geom Coordinate Envelope GeometryFactory LineSegment PrecisionModel Triangle]
@@ -19,18 +17,27 @@
 
 ;; WKT generator
 
+(def gen-magnitude
+  ;; Strictly-positive double in [1e-3, 1000]. The shared magnitude draw behind
+  ;; gen-coord and gen-pos-coord.
+  ;;
+  ;; Bound the draw; never fold an out-of-range tail onto the boundary with
+  ;; max/min. double*'s exponent range grows with test.check's size parameter
+  ;; (2^(size/8)), so a fold turns most draws at moderate size into a point
+  ;; mass on the floor, and everything built on the generator inherits it.
+  (gen/double* {:min 1.0e-3 :max 1000.0 :NaN? false :infinite? false}))
+
 (def gen-coord
-  ;; Finite, no NaN, modest magnitude, and no subnormal-near-zero values.
-  ;; gen/double* with min/max bounds still produces subnormals (down to
-  ;; ~1e-308); clamping non-zero outputs to >= 1e-10 magnitude avoids the
-  ;; class of failures where JS and JVM atan2 / circumradius / similar
-  ;; angle-or-radius math diverge at near-degenerate inputs.
-  (gen/fmap (fn [^double d]
-              (cond
-                (zero? d)                       0.0
-                (< (Math/abs d) 1.0e-10)        (* (Math/signum d) 1.0e-10)
-                :else                            d))
-            (gen/double* {:min -1000.0 :max 1000.0 :NaN? false :infinite? false})))
+  ;; Finite, no NaN, modest magnitude: exactly zero, or +-gen-magnitude.
+  ;; Nothing sits between zero and 1e-3 in magnitude, which keeps out the
+  ;; subnormal-near-zero class of failures where JS and JVM atan2 /
+  ;; circumradius / similar angle-or-radius math diverge at near-degenerate
+  ;; inputs. The zero branch keeps double*'s own share, so the axis-aligned
+  ;; and origin cases stay in the corpus.
+  (gen/frequency
+   [[2  (gen/return 0.0)]
+    [98 (gen/fmap (fn [[^double sign ^double mag]] (* sign mag))
+                  (gen/tuple (gen/elements [-1.0 1.0]) gen-magnitude))]]))
 
 (def gen-wkt
   (gen/let [cx     gen-coord
@@ -42,7 +49,7 @@
                   (str (+ cx (* radius (Math/cos theta))) " "
                        (+ cy (* radius (Math/sin theta))))))
           closed (concat pts [(first pts)])]
-      (str "POLYGON ((" (clojure.string/join ", " closed) "))"))))
+      (str "POLYGON ((" (str/join ", " closed) "))"))))
 
 (def gen-irregular-wkt
   ;; A jittered-radius star polygon: equal angles, independent per-vertex
@@ -64,7 +71,7 @@
                    (str (+ cx (* r (Math/cos theta))) " "
                         (+ cy (* r (Math/sin theta))))))
                radii)]
-      (str "POLYGON ((" (clojure.string/join ", " (concat pts [(first pts)])) "))"))))
+      (str "POLYGON ((" (str/join ", " (concat pts [(first pts)])) "))"))))
 
 (def gen-line-wkt
   ;; A LINESTRING WKT with 2-5 uncorrelated vertices. Targets methods
@@ -79,7 +86,56 @@
             xs    (gen/vector gen-coord n-pts)
             ys    (gen/vector gen-coord n-pts)]
     (let [pts (map (fn [x y] (str x " " y)) xs ys)]
-      (str "LINESTRING (" (clojure.string/join ", " pts) ")"))))
+      (str "LINESTRING (" (str/join ", " pts) ")"))))
+
+(def gen-spaced-line-wkt
+  ;; A LINESTRING with no zero-length segment. gen-line-wkt draws x and y
+  ;; independently from gen-coord, so any two draws that coincide repeat a
+  ;; vertex. VariableBuffer builds cap geometry per segment and cannot form a
+  ;; ring from a zero-length one, so the JVM oracle itself throws before any
+  ;; comparison happens. Walking by polar offsets keeps every segment
+  ;; non-degenerate while leaving direction and length free.
+  ;;
+  ;; The floor is 100, not 1, because a second degenerate band sits at
+  ;; buffer-distance / segment-length in [1.5, 3.5] (measured). Pairing this
+  ;; with gen-buffer-dist (<= 50) holds the ratio at or below 0.5.
+  (gen/fmap
+   (fn [pts] (str "LINESTRING (" (str/join ", " (map (fn [[x y]] (str x " " y)) pts)) ")"))
+   (gen/such-that
+    ;; VariableBuffer's 4-arg overload picks the mid vertex as the first one at
+    ;; or past half the line length, so a vertex within a rounding step of
+    ;; exactly half is a step discontinuity: the two sides sum the cumulative
+    ;; lengths with different rounding and pick different indices. Rejecting
+    ;; the near-tie band keeps the comparison on one side of the step.
+    (fn [pts]
+      (let [segs (map (fn [[x1 y1] [x2 y2]] (Math/hypot (- x2 x1) (- y2 y1)))
+                      pts (rest pts))
+            total (reduce + segs)
+            cums  (rest (reductions + 0.0 segs))]
+        (and (pos? total)
+             (every? #(> (Math/abs (- (/ % total) 0.5)) 1.0e-6) cums))))
+    (gen/let [x0    gen-coord
+              y0    gen-coord
+              n     (gen/choose 1 4)
+              steps (gen/vector
+                     (gen/tuple
+                      (gen/double* {:min 0.0 :max (* 2.0 Math/PI) :NaN? false :infinite? false})
+                      (gen/double* {:min 100.0 :max 500.0 :NaN? false :infinite? false}))
+                     n)]
+      (vec (reductions (fn [[px py] [^double ang ^double r]]
+                         [(+ px (* r (Math/cos ang))) (+ py (* r (Math/sin ang)))])
+                       [x0 y0]
+                       steps)))
+    100)))
+
+(def gen-buffer-dist
+  ;; Strictly-positive buffer distance in [1e-3, 50]. Pairs with
+  ;; gen-spaced-line-wkt, whose segments are >= 100, to hold the
+  ;; distance/segment ratio at or below 0.5 and clear of the [1.5, 3.5]
+  ;; band where VariableBuffer's per-segment cap construction degenerates.
+  ;; Bounded directly rather than folded down from gen-coord — see
+  ;; gen-magnitude for what the fold did to the distribution.
+  (gen/double* {:min 1.0e-3 :max 50.0 :NaN? false :infinite? false}))
 
 (def gen-point-wkt
   ;; A POINT WKT. Targets InteriorPointPoint.getInteriorPoint, which
@@ -98,7 +154,7 @@
             ys (gen/vector gen-coord n)
             zs (gen/vector gen-coord n)]
     (str "LINESTRING Z ("
-         (clojure.string/join ", " (map (fn [x y z] (str x " " y " " z)) xs ys zs))
+         (str/join ", " (map (fn [x y z] (str x " " y " " z)) xs ys zs))
          ")")))
 
 (def gen-point-wkt-3d
@@ -205,7 +261,7 @@
   ;; zero produces +/-Infinity or NaN (Vector3D.divide(double),
   ;; MathUtil.ceil's precScale, MathUtil.wrap's max). Substitutes a
   ;; sign-preserving 1.0 for any zero draw so the magnitude floor
-  ;; (1.0e-10) and finite-range guarantees from gen-coord still hold.
+  ;; (1.0e-3) and finite-range guarantees from gen-coord still hold.
   (gen/fmap (fn [^double d] (if (zero? d) 1.0 d))
             gen-coord))
 
@@ -213,8 +269,8 @@
   ;; A [c0 c1] pair of Coordinates guaranteed distinct: c1 = c0 + (dx, dy) with
   ;; dx non-zero, so c0 and c1 always differ. Octant.octant / Quadrant.quadrant
   ;; throw on identical points, and two independent gen-coordinate draws can
-  ;; collide via gen-coord's 1e-10 magnitude clamp. Supplied as the whole arg
-  ;; tuple via a manual.edn :gen-tuple hint.
+  ;; collide on the shared zero branch. Supplied as the whole arg tuple via a
+  ;; manual.edn :gen-tuple hint.
   (gen/let [x0 gen-coord, y0 gen-coord, dx gen-nz-coord, dy gen-coord]
     [(Coordinate. (double x0) (double y0))
      (Coordinate. (double (+ x0 dx)) (double (+ y0 dy)))]))
@@ -237,14 +293,14 @@
        (Coordinate. (double (+ nx b1x)) (double (+ ny b1y)))])))
 
 (def gen-pos-coord
-  ;; Strictly-positive double in (0, 1000]. For tolerance / distance /
+  ;; Strictly-positive double in [1e-3, 1000]. For tolerance / distance /
   ;; length / radius / width params that JTS validates as > 0 (densify
   ;; distanceTolerance, simplifier tolerance, MaximumInscribedCircle
   ;; tolerance, ConcaveHull maxLength, ...). The generic spec-form engine
   ;; selects this by param name; a signed gen-coord makes the JTS oracle
-  ;; throw "Tolerance must be positive" before any comparison.
-  (gen/fmap (fn [^double d] (max 1.0e-3 (Math/abs d)))
-            gen-coord))
+  ;; throw "Tolerance must be positive" before any comparison. Same draw as
+  ;; gen-coord's magnitude, without the sign and the zero branch.
+  gen-magnitude)
 
 (def gen-unit-frac
   ;; Double in (0, 1.0]. For ratio / fraction params (ConcaveHull
@@ -290,12 +346,9 @@
   ;; Four Coordinates [p1 p2 p3 q] for isInCircle* predicates. p1/p2/p3
   ;; must form a non-degenerate triangle so the circumcircle is well-
   ;; defined; q must be distinct from each vertex so it doesn't sit on
-  ;; the circumcircle exactly. At gen-coord's 1e-10 clamp floor
-  ;; independent draws can yield coincident points (the
-  ;; TrianglePredicate.isInCircleCC flake came from p2 == q both at
-  ;; (1e-10, -1e-10)), pushing the predicate to its singularity where
-  ;; JS and JVM can disagree on sign. Bumps duplicates by distinct
-  ;; y-offsets so the post-fix points stay pairwise distinct.
+  ;; the circumcircle exactly. Coincident points push the predicate to its
+  ;; singularity, where JS and JVM can disagree on sign. Bumps duplicates
+  ;; by distinct y-offsets so the post-fix points stay pairwise distinct.
   (gen/let [p1 gen-coordinate
             p2 gen-coordinate
             p3 gen-coordinate
@@ -393,7 +446,27 @@
     (do (println "  skipping differential tests: dist/wasmts.js.wasm not present")
         (f))
     (try
+      ;; Zeroed per run, not per process: these are plain atoms, so a second
+      ;; suite run in the same JVM would otherwise report the first run's
+      ;; skips on top of its own.
+      (reset! rpc/jvm-unstable-skips 0)
+      (reset! rpc/jvm-stable-checks 0)
       (rpc/start!)
       (f)
+      ;; A :jvm-stable case whose JVM answer moves under the probe set is
+      ;; skipped, which passes without asserting anything. Widening
+      ;; rpc/nudge-probes raises this rate and strengthens nothing about the
+      ;; cases still compared, so the ceiling is what stops the probe set being
+      ;; widened until the guarded specs assert nothing and still pass green.
+      (let [skips @rpc/jvm-unstable-skips
+            checks @rpc/jvm-stable-checks
+            rate (if (pos? checks) (/ (double skips) checks) 0.0)]
+        (when (pos? skips)
+          (println (format "  %d of %d guarded comparison(s) skipped (%.1f%%): JVM did not hold its answer under rpc/nudge-probes"
+                           skips checks (* 100.0 rate))))
+        (when (> rate 0.25)
+          (throw (ex-info (format "jvm-stable? skipped %d of %d guarded comparisons (%.1f%%, ceiling 25%%). The guarded specs are passing without asserting; widen the inputs or narrow nudge-probes rather than raising the ceiling."
+                                  skips checks (* 100.0 rate))
+                          {:skips skips :checks checks}))))
       (finally
         (rpc/stop!)))))

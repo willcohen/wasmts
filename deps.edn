@@ -3,7 +3,15 @@
  :deps {org.clojure/clojure                   {:mvn/version "1.12.3"}
         org.locationtech.jts/jts-core         {:mvn/version "1.20.0"}
         org.locationtech.jts.io/jts-io-common {:mvn/version "1.20.0"}
-        org.ow2.asm/asm                       {:mvn/version "9.7.1"}}
+        org.ow2.asm/asm                       {:mvn/version "9.7.1"}
+        ;; The sources jar carries the javadoc that script/javadoc_index.clj
+        ;; renders into the .d.ts, and the parameter names that
+        ;; script/source_param_names.clj recovers for LVT-less interfaces.
+        ;; Declared so it resolves onto the classpath instead of being
+        ;; discovered by guessing a ~/.m2 path — a missing jar should fail
+        ;; the build, not silently emit an undocumented .d.ts.
+        org.locationtech.jts/jts-core$sources {:mvn/version "1.20.0"}
+        com.github.javaparser/javaparser-core {:mvn/version "3.26.4"}}
 
  :aliases
  {;; jar -> registry.edn in one process
