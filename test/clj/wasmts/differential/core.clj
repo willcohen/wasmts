@@ -29,10 +29,11 @@
   (:import [java.io BufferedReader InputStreamReader OutputStreamWriter Writer]
            [java.nio.charset StandardCharsets]
            [java.util Base64]
-           [org.locationtech.jts.geom Coordinate Envelope Geometry GeometryFactory LineSegment PrecisionModel Triangle]
+           [org.locationtech.jts.geom Coordinate CoordinateFilter Envelope Geometry GeometryFactory LineSegment PrecisionModel Triangle]
            [org.locationtech.jts.io WKTReader WKBReader WKBWriter]
            [org.locationtech.jts.algorithm.distance DiscreteHausdorffDistance]
-           [org.locationtech.jts.math Vector3D]))
+           [org.locationtech.jts.math Vector3D]
+           [org.locationtech.jts.operation.distance3d Distance3DOp]))
 
 ;; JTS oracle helpers (no RPC)
 
@@ -167,7 +168,11 @@
 (defn jts->wasmts
   "Ship a JTS Geometry to the runner via WKB. Returns the {__handle ...}
    wrapper the runner uses to refer to the wasmts geometry. The caller
-   is responsible for calling (release! handle) when done."
+   is responsible for calling (release! handle) when done.
+
+   Dimension comes off the FIRST coordinate, so a geometry whose leading
+   vertex is 2D and whose later ones carry Z would ship flattened. Every 3D
+   generator gives every vertex a Z, so nothing today can be shaped that way."
   [^Geometry g]
   (let [c    (.getCoordinate g)
         dim3 (and c (not (Double/isNaN (.getZ ^Coordinate c))))
@@ -335,16 +340,19 @@
     (release! h1)
     [p0 p1]))
 
-(defn wasmts-coord-array-xys
-  "Read [[x0 y0] [x1 y1] ...] off a wasmts CoordinateArray handle.
-   After Bundle HH the handle wraps a real JS array of plain {x, y, z?, m?}
-   objects (with a non-enumerable _jtsCoordArray stash for round-trip back
-   into JTS). The runner-side _coordArrayXys builtin derefs the handle
-   and returns the xy pairs natively — no per-coord handle churn."
+(defn wasmts-coord-array-xyzs
+  "Read [[x0 y0 z0] [x1 y1 z1] ...] off a wasmts CoordinateArray handle.
+
+   Any ordinate with no JSON representation arrives as null — an absent or NaN
+   z, and a NaN or infinite x or y that JSON.stringify coerces. All read back
+   as NaN, which is what JTS uses for `no Z`, so a 2D result compares as 2D on
+   both sides and close-enough? treats the pair as equal. decode-special-float
+   does not reach these; it decodes only the top level of a response."
   [handle]
-  (mapv (fn [pair]
-          [(double (nth pair 0)) (double (nth pair 1))])
-        (call! "_coordArrayXys" handle)))
+  (let [ord (fn [v] (if (some? v) (double v) Double/NaN))]
+    (mapv (fn [coord]
+            [(ord (nth coord 0 nil)) (ord (nth coord 1 nil)) (ord (nth coord 2 nil))])
+          (call! "_coordArrayXys" handle))))
 
 (defn close-enough?
   "Tolerance comparison for the differential numeric checks. Combined
@@ -378,10 +386,8 @@
    their vertex counts differ. The differential suite's default geometry
    compare (.norm + .equalsExact) is vertex-count-strict: it false-fails
    when the WASM port emits a geometrically-identical result carrying a
-   near-coincident vertex the JVM JTS collapses (observed for
-   VariableBuffer / OffsetCurve / CubicBezierCurve / Densifier — the two
-   outputs differ by ~1e-14 in shape, purely a vertex-representation
-   artifact). For areal results compares symmetric-difference area against
+   near-coincident vertex the JVM JTS collapses. For areal results compares
+   symmetric-difference area against
    tol*area; for linear/point results uses discrete Hausdorff against
    tol*extent. The fast path keeps the strict compare for the common case.
    A genuinely different result (e.g. a tie-broken min-clearance LINE) is
@@ -399,6 +405,182 @@
             ext (Math/hypot (.getWidth env) (.getHeight env))]
         (try (<= (DiscreteHausdorffDistance/distance a b) (* tol (max 1.0 ext)))
              (catch Throwable _ false))))))
+
+(defn- coord-on-geometry?
+  "True when `c` lies on `g` to within tol, scaled by g's extent the same
+   way geom-same-shape? scales its Hausdorff bound.
+
+   `.distance` is zero anywhere inside an areal `g`, not only on its
+   boundary. That costs nothing while the two geometries are disjoint, since
+   an interior point cannot span the minimum separation — the segment from it
+   to the other point crosses the boundary first, at a strictly shorter
+   distance. It matters when they overlap; see nearest-pair-agrees?."
+  [^Geometry g ^Coordinate c ^double tol dim3?]
+  (let [p   (.createPoint factory c)
+        env (.getEnvelopeInternal g)
+        ext (Math/hypot (.getWidth env) (.getHeight env))
+        d   (if dim3? (Distance3DOp/distance g p) (.distance g p))]
+    (<= d (* tol (max 1.0 ext)))))
+
+(defn nearest-pair-agrees?
+  "Compare a JTS nearest-point pair (Coordinate[2]) against the port's as a
+   PAIR rather than coordinate-for-coordinate.
+
+   Where the nearest approach is not unique, neither is the pair: on parallel
+   edges both sides return a valid pair at the same separation, slid along the
+   parallel by the same delta, which an order-strict ordinate compare rejects.
+   So this asserts the two properties that define the answer instead — the
+   separation agrees, and each point lies on the geometry it came from. Both
+   halves are needed; separation alone accepts a correctly-spaced pair anywhere
+   in the plane. When the JTS pair carries a real Z (Distance3DOp) both go
+   through the 3D operations, so a wrong Z still fails.
+
+   Accepting the tie costs two regimes the strict compare pinned. The
+   separation goes through the relative close-enough?, so the positional error
+   accepted scales as tol/sin(theta) and is unbounded as the approach angle
+   goes to zero. And where the two geometries overlap the JTS distance is zero,
+   so any coincident pair inside the overlap passes."
+  ;; tol is deliberately un-hinted: a fn taking a primitive is capped at four
+  ;; args, and this one needs five.
+  [^"[Lorg.locationtech.jts.geom.Coordinate;" jts-pair wasmts-xyzs
+   ^Geometry g0 ^Geometry g1 tol]
+  (and (= 2 (alength jts-pair))
+       (= 2 (count wasmts-xyzs))
+       (let [^Coordinate j0 (aget jts-pair 0)
+             ^Coordinate j1 (aget jts-pair 1)
+             dim3? (and (not (Double/isNaN (.getZ j0)))
+                        (not (Double/isNaN (.getZ j1))))
+             mk    (fn [[x y z]] (Coordinate. (double x) (double y) (double z)))
+             w0    (mk (nth wasmts-xyzs 0))
+             w1    (mk (nth wasmts-xyzs 1))
+             sep   (fn [^Coordinate a ^Coordinate b]
+                     (if dim3? (.distance3D a b) (.distance a b)))]
+         (and (close-enough? (sep j0 j1) (sep w0 w1) tol)
+              (coord-on-geometry? g0 w0 tol dim3?)
+              (coord-on-geometry? g1 w1 tol dim3?)))))
+
+(def jvm-unstable-skips
+  "Comparisons skipped because the JVM did not hold its answer under
+   nudge-probes. A skip passes without asserting anything, so the count is
+   both reported and gated; see with-runner-once."
+  (atom 0))
+
+(def jvm-stable-checks
+  "Comparisons that consulted jvm-stable? at all, skipped or not. The
+   denominator for the skip-rate ceiling in with-runner-once."
+  (atom 0))
+
+(defn- nudged
+  "`g` with every coordinate equal to the one at `idx` moved up `width` ULPs
+   along `axis`.
+
+   All matching coordinates move together so a ring stays closed. The first
+   and last vertex of a LinearRing hold equal values, and moving only one
+   would make the geometry invalid."
+  ^Geometry [^Geometry g idx axis ^long width]
+  (let [^Coordinate target (aget (.getCoordinates g) idx)
+        tx   (.getX target)
+        ty   (.getY target)
+        bump (fn [^double v]
+               (loop [v v i 0] (if (>= i width) v (recur (Math/nextUp v) (inc i)))))
+        c    (.copy g)]
+    (.apply c (reify CoordinateFilter
+                (filter [_ coord]
+                  (let [^Coordinate coord coord]
+                    (when (and (== (.getX coord) tx) (== (.getY coord) ty))
+                      (if (= :x axis)
+                        (.setX coord (bump (.getX coord)))
+                        (.setY coord (bump (.getY coord)))))))))
+    (.geometryChanged c)
+    c))
+
+(def geom-strict-same?
+  "jvm-stable?'s sameness test for the strict geometry compare.
+
+   Held at 1e-9 against the compare's 1e-6, so the guard is never looser than
+   what it guards. Two things keep that gap empty, and both are easy to break:
+   TopologyPreservingSimplifier, its only user, SELECTS input vertices rather
+   than computing new ones, so the answer moves by exactly the nudge (a method
+   that computes vertices amplifies, and 1e-9 would call it unstable
+   everywhere); and gen-coord's magnitude ceiling keeps the widest probe, 1024
+   ULPs, barely under 1e-9. Raising that ceiling an order of magnitude takes
+   every case out of comparison at once."
+  (fn [^Geometry a ^Geometry b] (.equalsExact (.norm a) (.norm b) 1.0e-9)))
+
+(def geom-area-same?
+  "jvm-stable?'s sameness test for an :area compare.
+
+   Only the area has to hold, because only the area is compared. Testing
+   geometry equality instead would call a case unstable whenever a nudge
+   reshuffles vertices at constant area, which is most of them, and would skip
+   far more than the ties the guard is there to catch."
+  (fn [^Geometry a ^Geometry b] (close-enough? (.getArea a) (.getArea b) 1.0e-6)))
+
+(def ^:private nudge-probes
+  "The [axis ULP-width] perturbations the stability probe applies to each
+   vertex. Both axes, since a tie can turn on either.
+
+   1 and 4 catch the last-bit ties; 1024 catches the wide-basin ties, where the
+   JVM holds its pick against any small nudge. Each width is fitted to one
+   observed case, and a basin has no characteristic width, so the next one has
+   no reason to flip below 1024 either. Only TopologyPreservingSimplifier needs
+   1024; the two :area users pay six probes per vertex for it.
+
+   Widening is a one-way trade — it raises the skip rate and strengthens
+   nothing about the cases still compared — so with-runner-once caps the rate."
+  (for [axis [:x :y] width [1 4 1024]] [axis width]))
+
+(defn- distinct-vertex-indices
+  "One index per distinct (x, y) in `g`, first occurrence.
+
+   `nudged` moves every coordinate matching the target's (x, y), so probing a
+   repeated vertex reproduces the variant its first occurrence already
+   produced. Every ring repeats its start vertex at the end, so there is
+   always at least one such duplicate to drop."
+  [^Geometry g]
+  (->> (.getCoordinates g)
+       (map-indexed (fn [i ^Coordinate c] [i [(.getX c) (.getY c)]]))
+       (reduce (fn [[seen out] [i xy]]
+                 (if (seen xy) [seen out] [(conj seen xy) (conj out i)]))
+               [#{} []])
+       second))
+
+(defn jvm-stable?
+  "True when `run` returns the same geometry for `geoms` and for every
+   single-vertex perturbation of any one of them (see nudge-probes).
+
+   Some JTS algorithms carry more than one stable output branch and select
+   between them on the last bit of an intermediate. Where the JVM itself flips,
+   its result is not a well-defined reference, so the caller skips that case.
+
+   `geoms` is every geometry the call binds, and `run` takes that same vector.
+   Perturbing only the first would leave a method's sensitivity to its second
+   geometry untested while still reporting stable. `same?` must match whatever
+   the caller goes on to compare; see geom-area-same?.
+
+   Costs 6*sum(distinct vertices)+1 JVM calls per case, so it stays cheap only
+   while the generators keep vertex counts small (<= 9 today).
+
+   This says nothing about the port: an input the JVM answers stably is still
+   compared, and a disagreement there is still a failure."
+  ([geoms run] (jvm-stable? geoms run geom-strict-same?))
+  ([geoms run same?]
+   (let [geoms    (vec geoms)
+         base     (run geoms)
+         variants (for [i (range (count geoms))
+                        :let [^Geometry g (nth geoms i)]
+                        j (distinct-vertex-indices g)
+                        [axis width] nudge-probes]
+                    (assoc geoms i (nudged g j axis width)))
+         ok       (every? (fn [v]
+                            (try (same? base (run v))
+                                 ;; A perturbation the oracle cannot process at
+                                 ;; all is not a stable reference either.
+                                 (catch Throwable _ false)))
+                          variants)]
+     (swap! jvm-stable-checks inc)
+     (when-not ok (swap! jvm-unstable-skips inc))
+     ok)))
 
 ;; Diagnostics
 

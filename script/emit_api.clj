@@ -391,8 +391,6 @@
 
 ;; Geometry receivers route through :receiver-call generically; the bespoke
 ;; defmethods below cover cases the generic template can't:
-;;   - getUserData / setUserData pass the raw Object through;
-;;   - getCoordinate uses createJSCoordinateOrNull for empty geometries;
 ;;   - getCoordinateSequence dispatches polymorphically Point/LineString;
 ;;   - 4 apply(*Filter) callbacks wrap the JS callback into a JTS filter.
 ;;
@@ -426,12 +424,10 @@
    "API.convertGeometryCollectionToJS((java.util.Collection<org.locationtech.jts.geom.Geometry>) (java.util.Collection<?>) API.extractLineMerger(a1).%s())"
    method))
 
-;; Geometry.getUserData() / setUserData(Object) route through
-;; {:kind :receiver-call}: the "java.lang.Object" return-type-wrappers
+;; Geometry.getUserData() / setUserData(Object) route through the generic
+;; {:kind :receiver-call} rule: the "java.lang.Object" return-type-wrappers
 ;; entry is identity (Web Image auto-wraps the raw reference for JS) and
-;; coerce-arg-expr emits `(Object) aN` for the setter. Object return /
-;; Object param aren't coercible, so the hoisted generic rule skips them;
-;; the user-data cond rules in build_registry produce the shape directly.
+;; coerce-arg-expr emits `(Object) aN` for the setter.
 
 ;; Geometry.apply(*Filter): wraps the JS callback in the matching
 ;; JSCallback<X>Filter, copies the receiver so JTS's in-place mutation
@@ -505,10 +501,9 @@
       "boolean"  (format "((JSValue) %s).asBoolean()" v)
       "char"     (format "((JSValue) %s).asString().charAt(0)" v)
       "java.lang.String" (format "((JSValue) %s).asString()" v)
-      ;; Object param: no-op cast, raw value passed through. Only
-      ;; Geometry.setUserData(Object) reaches here (other Object params
-      ;; route through :param-override). Emits `(Object) aN` (not the FQN)
-      ;; to match the legacy :geometry-set-user-data emit.
+      ;; Object param: no-op cast, raw value passed through. Reached by
+      ;; Geometry.setUserData and by the items the spatial indexes store
+      ;; and return (STRtree, SIRtree, Quadtree, HPRtree).
       "java.lang.Object" (format "(Object) %s" v)
       "org.locationtech.jts.math.Vector3D"       (format "API.extractVector3D(%s)" v)
       "org.locationtech.jts.geom.IntersectionMatrix" (format "API.extractIntersectionMatrix(%s)" v)
@@ -580,14 +575,6 @@
 ;; API.extract<ClassName> from the entry's :class.
 
 
-;; Static Collection<Geometry> arg: bespoke (Arrays.asList(extractGeometryArray(a1))).
-;; Stays per-shape because the generic template doesn't model the
-;; Collection-from-Coord[] adaptation.
-(defmethod dispatch-body :static-collection->geom [{:keys [class method]} _]
-  (let [call (format "%s.%s(java.util.Arrays.asList(API.extractGeometryArray(a1)))" class method)]
-    (format "API.createJSGeometry(JSString.of(%s.getGeometryType()), %s)" call call)))
-
-
 ;; Three generic templates collapse the per-shape vocabulary into the
 ;; structured-shape map `{:kind :receiver-call | :static-call | :ctor}`;
 ;; classifier rules in build_registry opt classes in via the
@@ -620,9 +607,7 @@
    "char"                                     (fn [e] (format "JSString.of(String.valueOf(%s))" e))
    "java.lang.String"                         (fn [e] (format "JSString.of(%s)" e))
    ;; Object return: identity pass-through. Web Image auto-wraps the raw
-   ;; Java reference for JS. Only Geometry.getUserData() reaches here
-   ;; (other Object returns aren't coercible). Matches the legacy
-   ;; :geometry-get-user-data emit.
+   ;; Java reference for JS.
    "java.lang.Object"                         (fn [e] e)
    "byte[]"                                   (fn [e] (format "API.byteArrayToJSUint8Array(%s)" e))
    ;; primitive-array return wraps. Plain JS arrays of

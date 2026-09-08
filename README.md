@@ -33,7 +33,7 @@ Coordinates are plain objects. `{x, y}` for 2D, `{x, y, z}` for 3D, `{x, y, z, m
 
 Move geometry across boundaries as a serialized format. A handle is only valid inside the WASM instance that created it. To send geometry to a Web Worker or persist it, serialize to WKT, WKB, or GeoJSON and parse it on the other side.
 
-The shipped `dist/wasmts.d.ts` is the authoritative list of what exists. It is generated alongside the WASM and drives editor autocomplete.
+The shipped `dist/wasmts.d.ts` is the authoritative list of what exists. It is generated alongside the WASM and drives editor autocomplete. It also carries the JTS documentation for each method, so hover text tells you what the arguments mean and links to the method on the [JTS javadoc](https://locationtech.github.io/jts/javadoc/).
 
 ## Install
 
