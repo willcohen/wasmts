@@ -3,7 +3,12 @@
 All notable changes to this project will be documented in this file. This change
 log follows the conventions of [keepachangelog.com](http://keepachangelog.com/).
 
-## [Unreleased]
+## [0.1.0-alpha7] - 2026-09-17
+
+Adds the JTS documentation to `dist/wasmts.d.ts`, so editors show it on hover.
+Wrapper methods move onto one shared prototype per type, which changes how
+detached method references behave. Test coverage of the generated surface is
+still growing; this remains an alpha.
 
 ### Added
 
@@ -149,7 +154,8 @@ Proof of concept: JTS Topology Suite 1.20.0 compiled to WebAssembly using GraalV
 - Browser and Node.js compatible
 - Interactive demo with Monaco editor
 
-[Unreleased]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha6...HEAD
+[Unreleased]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha7...HEAD
+[0.1.0-alpha7]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha6...0.1.0-alpha7
 [0.1.0-alpha6]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha5...0.1.0-alpha6
 [0.1.0-alpha5]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha4...0.1.0-alpha5
 [0.1.0-alpha4]: https://github.com/willcohen/wasmts/compare/0.1.0-alpha3...0.1.0-alpha4
