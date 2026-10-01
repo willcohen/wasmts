@@ -11,22 +11,20 @@
     <script type="importmap">
 {
   "imports": {
-    "squint-cljs/core.js": "https://cdn.jsdelivr.net/npm/squint-cljs@0.14.208/core.js",
-    "squint-cljs/src/squint/string.js": "https://cdn.jsdelivr.net/npm/squint-cljs@0.14.208/src/squint/string.js",
+    "squint-cljs/core.js": "https://cdn.jsdelivr.net/npm/squint-cljs@0.14.210/core.js",
+    "squint-cljs/src/squint/string.js": "https://cdn.jsdelivr.net/npm/squint-cljs@0.14.210/src/squint/string.js",
     "resource-tracker": "https://cdn.jsdelivr.net/npm/resource-tracker@0.0.1/resource.mjs",
     "worker-router": "https://cdn.jsdelivr.net/npm/@wcohen/worker-router@0.0.2/dist/index.mjs",
     "worker-router/worker-bootstrap": "https://cdn.jsdelivr.net/npm/@wcohen/worker-router@0.0.2/dist/worker-bootstrap.mjs",
     "comlink": "https://cdn.jsdelivr.net/npm/comlink@4.4.2/dist/esm/comlink.mjs",
-    "ffi-wasm/handler-runtime": "https://cdn.jsdelivr.net/npm/ffi-wasm@0.0.1/src/cljc/net/willcohen/native/handler_runtime.mjs",
-    "ffi-wasm/pool": "https://cdn.jsdelivr.net/npm/ffi-wasm@0.0.1/src/cljc/net/willcohen/native/pool.mjs",
-    "ffi-wasm/workload-pool": "https://cdn.jsdelivr.net/npm/ffi-wasm@0.0.1/src/cljc/net/willcohen/native/workload_pool.mjs",
-    "proj-wasm": "https://cdn.jsdelivr.net/npm/proj-wasm@0.1.0-alpha10/dist/proj.mjs",
+    "ffi-wasm": "https://cdn.jsdelivr.net/npm/ffi-wasm@0.0.3/dist/ffi-wasm.mjs",
+    "proj-wasm": "https://cdn.jsdelivr.net/npm/proj-wasm@0.1.0/dist/proj.mjs",
     "maplibre-gl": "https://esm.sh/maplibre-gl@5.20.0?bundle-deps",
-    "backproj": "https://cdn.jsdelivr.net/npm/backproj@0.0.5/dist/backproj.mjs",
-    "maplibre-proj": "https://cdn.jsdelivr.net/npm/maplibre-proj@0.0.5/dist/maplibre-proj.mjs",
+    "backproj": "https://cdn.jsdelivr.net/npm/backproj@0.0.7/dist/backproj.mjs",
+    "maplibre-proj": "https://cdn.jsdelivr.net/npm/maplibre-proj@0.0.7/dist/maplibre-proj.mjs",
     "lru-cache": "https://cdn.jsdelivr.net/npm/lru-cache@11.2.6/dist/esm/index.js",
     "pbf": "https://esm.sh/pbf@4.0.1",
-    "@mapbox/vector-tile": "https://esm.sh/@mapbox/vector-tile@2.0.4",
+    "@mapbox/vector-tile": "https://esm.sh/@mapbox/vector-tile@2.0.5",
     "@wcohen/wasmts": "https://cdn.jsdelivr.net/npm/@wcohen/wasmts@0.1.0-alpha7/dist/wasmts.js"
   }
 }
@@ -180,10 +178,10 @@
       try {
         const proj = await import('proj-wasm');
         const { createTileProcessor } = await import('backproj');
-        const { worker_call } = await import('ffi-wasm/pool');
+        const { worker_call } = await import('ffi-wasm');
         const {
           make_wiring_BANG_, ensure_wired_BANG_, register_handler_BANG_,
-        } = await import('ffi-wasm/workload-pool');
+        } = await import('ffi-wasm');
         const { reprojectStyle } = await import('maplibre-proj');
         const { Map: MapGL, importScriptInWorkers } = await import('maplibre-gl');
 
